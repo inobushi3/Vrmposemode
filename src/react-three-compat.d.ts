@@ -14,6 +14,10 @@ declare module 'three/addons/controls/TransformControls.js' {
       type: 'dragging-changed',
       listener: (event: Event<'dragging-changed', TransformControlsClass> & { value: boolean }) => void,
     ): void;
+    addEventListener(
+      type: 'objectChange',
+      listener: (event: Event<'objectChange', TransformControlsClass>) => void,
+    ): void;
   }
 }
 
