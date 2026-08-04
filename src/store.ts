@@ -36,6 +36,7 @@ interface EditorState {
   setLoop: (loop: boolean) => void;
   setInterpolation: (value: 'LINEAR' | 'STEP') => void;
   upsertKeyframe: (keyframe: Keyframe) => void;
+  importKeyframes: (keyframes: Keyframe[], mode: 'replace' | 'append') => void;
   previewKeyframeTime: (id: string, time: number) => void;
   commitKeyframeTime: (before: Keyframe[]) => void;
   removeKeyframe: (id: string) => void;
@@ -75,6 +76,10 @@ function keyframeTimesChanged(before: Keyframe[], after: Keyframe[]): boolean {
     const next = after.find((candidate) => candidate.id === frame.id);
     return !next || Math.abs(next.time - frame.time) > 0.000001;
   });
+}
+
+function frameNumber(time: number, fps: number): number {
+  return Math.round(time * Math.max(1, fps));
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -134,6 +139,32 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     else current.push(keyframe);
     current.sort((a, b) => a.time - b.time);
     set({ keyframes: current, history: [...get().history.slice(-49), cloneFrames(get().keyframes)], future: [], dirtyPose: false });
+  },
+
+  importKeyframes: (incoming, mode) => {
+    if (!incoming.length) return;
+    const before = cloneFrames(get().keyframes);
+    const fps = get().fps;
+    const next = mode === 'replace' ? [] : cloneFrames(get().keyframes);
+    for (const frame of cloneFrames(incoming)) {
+      const occupied = next.findIndex((item) => frameNumber(item.time, fps) === frameNumber(frame.time, fps));
+      if (occupied >= 0) next[occupied] = frame;
+      else next.push(frame);
+    }
+    next.sort((a, b) => a.time - b.time);
+    const last = lastKeyframeTime(next);
+    const duration = mode === 'replace'
+      ? Math.max(0.1, Math.min(3600, last))
+      : Math.max(get().duration, last);
+    set({
+      keyframes: next,
+      duration,
+      currentTime: Math.min(duration, Math.max(0, incoming[0].time)),
+      playing: false,
+      history: [...get().history.slice(-49), before],
+      future: [],
+      dirtyPose: false,
+    });
   },
 
   previewKeyframeTime: (id, time) => {
