@@ -1,0 +1,28 @@
+name: Validate Windows DirectML
+
+on:
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  windows-build:
+    runs-on: windows-latest
+    timeout-minutes: 20
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Load ONNX Runtime native module
+        run: node -e "const ort = require('onnxruntime-node'); console.log('onnxruntime-node loaded', ort.env.versions);"
+
+      - name: Typecheck and build
+        run: npm run build
