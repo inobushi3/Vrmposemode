@@ -1,0 +1,35 @@
+{
+  "name": "vrm-pose-mode",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Editor desktop de poses e animações VRM com exportação VRMA.",
+  "main": "electron/main.cjs",
+  "type": "module",
+  "scripts": {
+    "start": "concurrently -k -s first \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
+    "dev": "npm start",
+    "build": "tsc -b && vite build",
+    "preview": "vite preview --host 127.0.0.1",
+    "typecheck": "tsc -b --pretty false"
+  },
+  "dependencies": {
+    "@pixiv/three-vrm": "3.5.5",
+    "lucide-react": "^0.468.0",
+    "react": "^19.1.1",
+    "react-dom": "^19.1.1",
+    "three": "^0.180.0",
+    "zustand": "^5.0.8"
+  },
+  "devDependencies": {
+    "@types/node": "^24.2.1",
+    "@types/react": "^19.1.10",
+    "@types/react-dom": "^19.1.7",
+    "@types/three": "^0.180.0",
+    "@vitejs/plugin-react": "^5.0.0",
+    "concurrently": "^9.2.0",
+    "electron": "^37.2.6",
+    "typescript": "^5.9.2",
+    "vite": "^7.1.1",
+    "wait-on": "^8.0.4"
+  }
+}
