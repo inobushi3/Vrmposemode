@@ -36,6 +36,8 @@ interface EditorState {
   setLoop: (loop: boolean) => void;
   setInterpolation: (value: 'LINEAR' | 'STEP') => void;
   upsertKeyframe: (keyframe: Keyframe) => void;
+  previewKeyframeTime: (id: string, time: number) => void;
+  commitKeyframeTime: (before: Keyframe[]) => void;
   removeKeyframe: (id: string) => void;
   clearKeyframes: () => void;
   undo: () => void;
@@ -65,6 +67,14 @@ function lastKeyframeTime(frames: Keyframe[]): number {
 function normalizeDuration(value: number, frames: Keyframe[], fallback = 10): number {
   const safeValue = Number.isFinite(value) ? value : fallback;
   return Math.max(0.1, Math.min(3600, safeValue), lastKeyframeTime(frames));
+}
+
+function keyframeTimesChanged(before: Keyframe[], after: Keyframe[]): boolean {
+  if (before.length !== after.length) return true;
+  return before.some((frame) => {
+    const next = after.find((candidate) => candidate.id === frame.id);
+    return !next || Math.abs(next.time - frame.time) > 0.000001;
+  });
 }
 
 export const useEditorStore = create<EditorState>((set, get) => ({
@@ -124,6 +134,30 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     else current.push(keyframe);
     current.sort((a, b) => a.time - b.time);
     set({ keyframes: current, history: [...get().history.slice(-49), cloneFrames(get().keyframes)], future: [], dirtyPose: false });
+  },
+
+  previewKeyframeTime: (id, time) => {
+    const safeTime = Math.max(0, Math.min(get().duration, Number.isFinite(time) ? time : 0));
+    const current = cloneFrames(get().keyframes);
+    const index = current.findIndex((frame) => frame.id === id);
+    if (index < 0) return;
+    current[index] = { ...current[index], time: safeTime };
+    current.sort((a, b) => a.time - b.time);
+    set({
+      keyframes: current,
+      currentTime: safeTime,
+      playing: false,
+    });
+  },
+
+  commitKeyframeTime: (before) => {
+    const after = get().keyframes;
+    if (!keyframeTimesChanged(before, after)) return;
+    set({
+      history: [...get().history.slice(-49), cloneFrames(before)],
+      future: [],
+      status: `Keyframe movido para ${get().currentTime.toFixed(2)}s.`,
+    });
   },
 
   removeKeyframe: (id) => {
