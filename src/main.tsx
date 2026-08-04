@@ -1,5 +1,6 @@
 import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
+import './lib/mediapipeTimestampGuard';
 import App from './App';
 import TimelineDurationControls from './components/TimelineDurationControls';
 import TimelineKeyframeDragLayer from './components/TimelineKeyframeDragLayer';
