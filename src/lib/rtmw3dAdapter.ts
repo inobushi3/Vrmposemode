@@ -22,9 +22,32 @@ export interface Rtmw3dRawPoint {
 
 const BODY_BBOX_INDICES = [0, 7, 8, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 26, 27, 28, 29, 30, 31, 32];
 
+// Segmentos usados para colocar o eixo de profundidade na mesma escala dos
+// eixos X/Y. O RTMW3D devolve X/Y em pixels do crop e Z em outra unidade;
+// usar Z cru faz braços e pernas apontarem exageradamente para a câmera.
+const DEPTH_CALIBRATION_SEGMENTS: ReadonlyArray<readonly [number, number]> = [
+  [11, 12], [23, 24], [11, 23], [12, 24],
+  [11, 13], [13, 15], [12, 14], [14, 16],
+  [23, 25], [25, 27], [24, 26], [26, 28],
+];
+
+const TARGET_MEDIAN_DEPTH_RATIO = 0.28;
+const MAX_WORLD_DEPTH = 1.35;
+
 function valid(point: PosePoint | undefined): point is PosePoint {
   return Boolean(point) && Number.isFinite(point!.x) && Number.isFinite(point!.y)
     && Math.min(point!.visibility ?? 1, point!.presence ?? 1) >= 0.12;
+}
+
+function clamp(value: number, minimum: number, maximum: number): number {
+  return Math.max(minimum, Math.min(maximum, value));
+}
+
+function median(values: number[]): number {
+  if (!values.length) return 0;
+  const sorted = [...values].sort((a, b) => a - b);
+  const middle = Math.floor(sorted.length / 2);
+  return sorted.length % 2 ? sorted[middle] : (sorted[middle - 1] + sorted[middle]) * 0.5;
 }
 
 export function createRtmw3dCrop(
@@ -124,6 +147,29 @@ function distance(a: Rtmw3dRawPoint, b: Rtmw3dRawPoint): number {
   return Math.hypot(a.x - b.x, a.y - b.y);
 }
 
+function calibratedDepthScale(points: Rtmw3dRawPoint[], torsoScale: number): number {
+  const planarLengths: number[] = [];
+  const depthLengths: number[] = [];
+
+  for (const [fromIndex, toIndex] of DEPTH_CALIBRATION_SEGMENTS) {
+    const from = points[fromIndex];
+    const to = points[toIndex];
+    if (!from || !to || Math.min(from.score, to.score) < 0.12) continue;
+    const planar = Math.hypot(to.x - from.x, to.y - from.y) / Math.max(1, torsoScale);
+    const depth = Math.abs(to.z - from.z);
+    if (Number.isFinite(planar) && planar > 0.015) planarLengths.push(planar);
+    if (Number.isFinite(depth) && depth > 0.0001) depthLengths.push(depth);
+  }
+
+  const planarMedian = median(planarLengths);
+  const depthMedian = median(depthLengths);
+  if (planarMedian <= 0 || depthMedian <= 0) return 0;
+
+  // Nunca aumenta o Z do modelo. Apenas o reduz até ele ter uma proporção
+  // plausível em relação ao esqueleto visto na imagem.
+  return clamp((planarMedian * TARGET_MEDIAN_DEPTH_RATIO) / depthMedian, 0.025, 1);
+}
+
 export function rtmw3dToDetectedFrame(
   rawPoints: Rtmw3dRawPoint[],
   crop: Rtmw3dCrop,
@@ -134,13 +180,14 @@ export function rtmw3dToDetectedFrame(
   const shoulderCenter = averageRaw(mapped, [11, 12]);
   const torsoScale = Math.max(24, distance(hipCenter, shoulderCenter));
   const hipDepth = (mapped[23].z + mapped[24].z) * 0.5;
+  const depthScale = calibratedDepthScale(mapped, torsoScale);
 
   const normalized: PosePoint[] = mapped.map((point) => {
     const source = cropToSource(point, crop);
     return {
       x: source.x / crop.sourceWidth,
       y: source.y / crop.sourceHeight,
-      z: point.z - hipDepth,
+      z: clamp((point.z - hipDepth) * depthScale, -MAX_WORLD_DEPTH, MAX_WORLD_DEPTH),
       visibility: Math.max(0, Math.min(1, point.score)),
       presence: Math.max(0, Math.min(1, point.score)),
     };
@@ -149,7 +196,7 @@ export function rtmw3dToDetectedFrame(
   const world: PosePoint[] = mapped.map((point) => ({
     x: (point.x - hipCenter.x) / torsoScale,
     y: (point.y - hipCenter.y) / torsoScale,
-    z: point.z - hipDepth,
+    z: clamp((point.z - hipDepth) * depthScale, -MAX_WORLD_DEPTH, MAX_WORLD_DEPTH),
     visibility: Math.max(0, Math.min(1, point.score)),
     presence: Math.max(0, Math.min(1, point.score)),
   }));
