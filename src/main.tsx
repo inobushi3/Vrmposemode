@@ -9,6 +9,7 @@ import './styles.css';
 import './timeline-custom.css';
 import './timeline-keyframe-drag.css';
 import './reference-pose.css';
+import './reference-pose-preview-fit.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
