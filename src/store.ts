@@ -58,6 +58,15 @@ function cloneFrames(frames: Keyframe[]): Keyframe[] {
   return structuredClone(frames);
 }
 
+function lastKeyframeTime(frames: Keyframe[]): number {
+  return frames.reduce((last, frame) => Math.max(last, frame.time), 0);
+}
+
+function normalizeDuration(value: number, frames: Keyframe[], fallback = 10): number {
+  const safeValue = Number.isFinite(value) ? value : fallback;
+  return Math.max(0.1, Math.min(3600, safeValue), lastKeyframeTime(frames));
+}
+
 export const useEditorStore = create<EditorState>((set, get) => ({
   projectName: 'Minha animação',
   modelInfo: null,
@@ -65,7 +74,7 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   availableBones: [],
   selectedBone: null,
   selectedTransform: defaultTransform,
-  duration: 3,
+  duration: 10,
   fps: 30,
   currentTime: 0,
   playing: false,
@@ -86,7 +95,20 @@ export const useEditorStore = create<EditorState>((set, get) => ({
   setAvailableBones: (availableBones) => set({ availableBones }),
   selectBone: (selectedBone) => set({ selectedBone }),
   setSelectedTransform: (selectedTransform) => set({ selectedTransform }),
-  setDuration: (duration) => set({ duration: Math.max(0.1, duration), currentTime: Math.min(get().currentTime, Math.max(0.1, duration)) }),
+  setDuration: (duration) => {
+    const frames = get().keyframes;
+    const requested = Number.isFinite(duration) ? duration : get().duration;
+    const finalDuration = normalizeDuration(requested, frames, get().duration);
+    const finalKeyframe = lastKeyframeTime(frames);
+    set({
+      duration: finalDuration,
+      currentTime: Math.min(get().currentTime, finalDuration),
+      playing: get().currentTime >= finalDuration ? false : get().playing,
+      status: requested < finalKeyframe
+        ? `A duração mínima é ${finalKeyframe.toFixed(2)}s porque existe um keyframe nesse ponto.`
+        : get().status,
+    });
+  },
   setFps: (fps) => set({ fps: Math.max(1, Math.min(120, Math.round(fps))) }),
   setCurrentTime: (currentTime) => set({ currentTime: Math.max(0, Math.min(get().duration, currentTime)) }),
   setPlaying: (playing) => set({ playing }),
@@ -145,8 +167,8 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   loadProject: (project) => set({
     projectName: project.name,
-    duration: project.duration,
-    fps: project.fps,
+    duration: normalizeDuration(project.duration, project.keyframes),
+    fps: Math.max(1, Math.min(120, Math.round(project.fps))),
     interpolation: project.interpolation ?? 'LINEAR',
     keyframes: cloneFrames(project.keyframes),
     currentTime: 0,
