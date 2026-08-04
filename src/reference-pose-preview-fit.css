@@ -1,0 +1,21 @@
+.reference-preview {
+  position: relative;
+  min-width: 0;
+  min-height: 0;
+}
+
+.reference-preview canvas {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  max-width: none;
+  max-height: none;
+  object-fit: contain;
+  object-position: center;
+  background: transparent;
+}
+
+.reference-preview.has-source canvas {
+  background: transparent;
+}
