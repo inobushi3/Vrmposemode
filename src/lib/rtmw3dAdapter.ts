@@ -1,4 +1,5 @@
 import type { DetectedPoseFrame, PosePoint } from './poseRetargeter';
+import { getRtmw3dDepthStrength } from './rtmw3dDepth';
 
 export const RTMW3D_INPUT_WIDTH = 288;
 export const RTMW3D_INPUT_HEIGHT = 384;
@@ -180,7 +181,7 @@ export function rtmw3dToDetectedFrame(
   const shoulderCenter = averageRaw(mapped, [11, 12]);
   const torsoScale = Math.max(24, distance(hipCenter, shoulderCenter));
   const hipDepth = (mapped[23].z + mapped[24].z) * 0.5;
-  const depthScale = calibratedDepthScale(mapped, torsoScale);
+  const depthScale = calibratedDepthScale(mapped, torsoScale) * getRtmw3dDepthStrength();
 
   const normalized: PosePoint[] = mapped.map((point) => {
     const source = cropToSource(point, crop);
