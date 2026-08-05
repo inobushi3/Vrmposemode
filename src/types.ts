@@ -7,11 +7,13 @@ export interface BonePose {
 }
 
 export type PoseSnapshot = Record<string, BonePose>;
+export type ExpressionSnapshot = Record<string, number>;
 
 export interface Keyframe {
   id: string;
   time: number;
   pose: PoseSnapshot;
+  expressions?: ExpressionSnapshot;
   easing: 'linear' | 'smooth' | 'step';
 }
 
@@ -31,12 +33,13 @@ export interface HumanoidRigSnapshot {
 
 export interface ModelInfo {
   name: string;
-  format: 'VRM' | 'GLB' | 'GLTF' | 'PMX' | 'PMD';
+  format: 'VRM' | 'GLB' | 'GLTF';
   avatarName?: string;
   author?: string;
   version?: string;
   metaVersion?: '0' | '1';
   boneCount: number;
+  availableExpressions?: string[];
   humanoidValid?: boolean;
   missingRequiredBones?: string[];
   heightMeters?: number;
