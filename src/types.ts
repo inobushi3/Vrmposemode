@@ -31,7 +31,7 @@ export interface HumanoidRigSnapshot {
 
 export interface ModelInfo {
   name: string;
-  format: 'VRM' | 'GLB' | 'GLTF';
+  format: 'VRM' | 'GLB' | 'GLTF' | 'PMX' | 'PMD';
   avatarName?: string;
   author?: string;
   version?: string;
