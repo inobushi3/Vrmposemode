@@ -26,6 +26,8 @@ export interface ImportedVrma {
   sourceDuration: number;
   sourceBones: number;
   importedBones: number;
+  sourceExpressions: number;
+  importedExpressions: number;
   keyframes: Keyframe[];
   effectiveFps: number;
   warnings: string[];
@@ -87,12 +89,14 @@ async function loadVrma(data: ArrayBuffer): Promise<VRMAnimation> {
 export async function inspectVrma(data: ArrayBuffer): Promise<{
   duration: number;
   boneCount: number;
+  expressionCount: number;
   hasRootMotion: boolean;
 }> {
   const animation = await loadVrma(data);
   return {
     duration: Math.max(0, animation.duration),
     boneCount: animation.humanoidTracks.rotation.size,
+    expressionCount: animation.expressionTracks.preset.size + animation.expressionTracks.custom.size,
     hasRootMotion: animation.humanoidTracks.translation.has('hips'),
   };
 }
@@ -108,8 +112,8 @@ export async function importVrma(
     throw new Error('A animação VRMA não possui duração válida.');
   }
 
-  const targetMetaVersion = options.targetMetaVersion
-    ?? useEditorStore.getState().modelInfo?.metaVersion;
+  const state = useEditorStore.getState();
+  const targetMetaVersion = options.targetMetaVersion ?? state.modelInfo?.metaVersion;
   const warnings: string[] = [];
   const requestedFps = Math.max(1, Math.min(120, Math.round(options.sampleFps || 30)));
   const maximumFps = Math.max(1, Math.floor((MAX_KEYFRAMES - 1) / sourceDuration));
@@ -123,8 +127,18 @@ export async function importVrma(
   for (const [bone, track] of animation.humanoidTracks.rotation) {
     if (available.has(bone)) rotationSamplers.set(bone, createSampler(track));
   }
-  if (!rotationSamplers.size) {
-    throw new Error('Nenhum osso humanoide do VRMA existe no modelo VRM aberto.');
+
+  const availableExpressions = new Set(state.modelInfo?.availableExpressions ?? []);
+  const expressionSamplers = new Map<string, TrackSampler>();
+  for (const [name, track] of animation.expressionTracks.preset) {
+    if (availableExpressions.has(name)) expressionSamplers.set(name, createSampler(track));
+  }
+  for (const [name, track] of animation.expressionTracks.custom) {
+    if (availableExpressions.has(name)) expressionSamplers.set(name, createSampler(track));
+  }
+
+  if (!rotationSamplers.size && !expressionSamplers.size) {
+    throw new Error('Nenhum osso ou expressão do VRMA existe no modelo VRM aberto.');
   }
 
   const hipsTrack = animation.humanoidTracks.translation.get('hips');
@@ -149,25 +163,30 @@ export async function importVrma(
         targetMetaVersion,
       );
     }
+    const expressions: Record<string, number> = {};
+    for (const [name, sampler] of expressionSamplers) {
+      expressions[name] = Math.max(0, Math.min(1, Number(sampler.evaluate(time)[0]) || 0));
+    }
     keyframes.push({
       id: crypto.randomUUID(),
       time,
       pose,
+      ...(Object.keys(expressions).length ? { expressions } : {}),
       easing: 'linear',
     });
   }
 
-  if (!hipsSampler) warnings.push('Este VRMA não possui deslocamento do quadril; o movimento ficará no lugar.');
+  if (!hipsSampler && rotationSamplers.size) warnings.push('Este VRMA não possui deslocamento do quadril; o movimento ficará no lugar.');
   if (!options.rootMotion && hipsSampler) warnings.push('O deslocamento do quadril foi removido pela configuração de root motion.');
   if (targetMetaVersion === '0') {
     warnings.push('Conversão de eixos VRM 0 aplicada ao root motion e às rotações normalizadas.');
   }
   const ignoredBones = animation.humanoidTracks.rotation.size - rotationSamplers.size;
-  if (ignoredBones > 0) warnings.push(`${ignoredBones} canal(is) foram ignorados porque o modelo aberto não possui esses ossos.`);
-  if (animation.expressionTracks.preset.size || animation.expressionTracks.custom.size) {
-    warnings.push('Expressões faciais do VRMA ainda não entram na timeline corporal.');
-  }
-  if (animation.lookAtTrack) warnings.push('O canal de olhar do VRMA ainda não entra na timeline corporal.');
+  if (ignoredBones > 0) warnings.push(`${ignoredBones} canal(is) de ossos foram ignorados porque o modelo aberto não possui esses ossos.`);
+  const sourceExpressionCount = animation.expressionTracks.preset.size + animation.expressionTracks.custom.size;
+  const ignoredExpressions = sourceExpressionCount - expressionSamplers.size;
+  if (ignoredExpressions > 0) warnings.push(`${ignoredExpressions} expressão(ões) foram ignoradas porque não existem no VRM aberto.`);
+  if (animation.lookAtTrack) warnings.push('O canal de olhar do VRMA ainda não entra na timeline.');
 
   return {
     name: safeName(fileName),
@@ -175,6 +194,8 @@ export async function importVrma(
     sourceDuration,
     sourceBones: animation.humanoidTracks.rotation.size,
     importedBones: rotationSamplers.size,
+    sourceExpressions: sourceExpressionCount,
+    importedExpressions: expressionSamplers.size,
     keyframes,
     effectiveFps,
     warnings,
