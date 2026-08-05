@@ -45,3 +45,36 @@ declare module 'three-mmd-runtime/examples/jsm/loaders/MMDLoader.js' {
     ): void;
   }
 }
+
+declare module 'three-mmd-runtime/examples/jsm/animation/MMDAnimationHelper.js' {
+  import type { AnimationClip, SkinnedMesh } from 'three';
+  import type { MmdVpd } from 'three-mmd-runtime/examples/jsm/loaders/MMDLoader.js';
+
+  export class MMDAnimationHelper {
+    constructor(params?: {
+      sync?: boolean;
+      afterglow?: number;
+      resetPhysicsOnLoop?: boolean;
+      pmxAnimation?: boolean;
+    });
+    enabled: {
+      animation: boolean;
+      ik: boolean;
+      grant: boolean;
+      physics: boolean;
+      cameraAnimation: boolean;
+    };
+    add(mesh: SkinnedMesh, params?: {
+      animation?: AnimationClip | AnimationClip[];
+      physics?: boolean;
+      animationWarmup?: boolean;
+    }): this;
+    remove(mesh: SkinnedMesh): this;
+    update(delta: number): this;
+    pose(mesh: SkinnedMesh, vpd: MmdVpd, params?: {
+      resetPose?: boolean;
+      ik?: boolean;
+      grant?: boolean;
+    }): this;
+  }
+}
