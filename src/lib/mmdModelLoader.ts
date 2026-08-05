@@ -74,17 +74,22 @@ function createResourceContext(files: File[]): ResourceContext {
   const urls = new Map<File, string>();
   const exact = new Map<string, string>();
   const basename = new Map<string, string>();
+  const knownBlobUrls = new Set<string>();
 
   for (const file of files) {
     const url = URL.createObjectURL(file);
     urls.set(file, url);
+    knownBlobUrls.add(url);
     const path = normalizePath(filePath(file));
     exact.set(path, url);
     basename.set(path.split('/').pop() ?? path, url);
   }
 
   manager.setURLModifier((requested) => {
-    if (/^(data:|blob:)/i.test(requested)) return requested;
+    if (/^data:/i.test(requested)) return requested;
+    const bareRequested = requested.replace(/#.*$/, '');
+    if (knownBlobUrls.has(bareRequested)) return requested;
+
     const normalized = normalizePath(requested);
     const direct = exact.get(normalized);
     if (direct) return direct;
@@ -171,9 +176,9 @@ export async function loadVmdOnMmdModel(mesh: THREE.SkinnedMesh, file: File): Pr
   }
 }
 
-function loadVpd(loader: MMDLoader, url: string): Promise<MmdVpd> {
+function loadVpd(loader: MMDLoader, url: string, isUnicode: boolean): Promise<MmdVpd> {
   return new Promise((resolve, reject) => {
-    loader.loadVPD(url, true, resolve, undefined, (error) => {
+    loader.loadVPD(url, isUnicode, resolve, undefined, (error) => {
       reject(error instanceof Error ? error : new Error(String(error || 'Falha ao abrir o VPD.')));
     });
   });
@@ -182,7 +187,12 @@ function loadVpd(loader: MMDLoader, url: string): Promise<MmdVpd> {
 export async function loadVpdFile(file: File): Promise<MmdVpd> {
   const url = URL.createObjectURL(file);
   try {
-    return await loadVpd(new MMDLoader(), `${url}#pose.vpd`);
+    const loader = new MMDLoader();
+    try {
+      return await loadVpd(loader, `${url}#pose.vpd`, false);
+    } catch {
+      return await loadVpd(new MMDLoader(), `${url}#pose.vpd`, true);
+    }
   } finally {
     URL.revokeObjectURL(url);
   }
