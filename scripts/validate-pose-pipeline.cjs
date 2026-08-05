@@ -158,7 +158,7 @@ assert.ok(papPackage.includes('/(?:^|\\/)(c\\d{4})(?:\\/|_)/'));
 
 const motionUi = read('src/components/MotionLibraryStudio.tsx');
 assert.ok(motionUi.includes('Selecionar ${expectedSklbName}'));
-assert.ok(motionUi.includes('window.desktop.pap.convert'));
+assert.ok(motionUi.includes('bridge.convert'));
 assert.ok(motionUi.includes('Converter PAP para timeline'));
 assert.ok(motionUi.includes('Preparar conversor XAT'));
 assert.ok(motionUi.includes('extractPmpPap'));
