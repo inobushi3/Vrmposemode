@@ -35,7 +35,7 @@ export interface ModelInfo {
   avatarName?: string;
   author?: string;
   version?: string;
-  metaVersion?: string;
+  metaVersion?: '0' | '1';
   boneCount: number;
   humanoidValid?: boolean;
   missingRequiredBones?: string[];
