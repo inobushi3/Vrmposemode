@@ -55,7 +55,7 @@ export default function MmdStudio(): JSX.Element | null {
   const modelInputRef = useRef<HTMLInputElement>(null);
   const folderInputRef = useRef<HTMLInputElement>(null);
   const motionInputRef = useRef<HTMLInputElement>(null);
-  const previewRef = useRef<HTMLDivElement>(null);
+  const canvasHostRef = useRef<HTMLDivElement>(null);
   const loadedPreviewRef = useRef<LoadedMmdModel | null>(null);
 
   const modelInfo = useEditorStore((state) => state.modelInfo);
@@ -88,16 +88,17 @@ export default function MmdStudio(): JSX.Element | null {
   }, [open]);
 
   useEffect(() => {
-    if (!open || !previewRef.current || !modelFiles.length) {
+    if (!open || !canvasHostRef.current || !modelFiles.length) {
       setPreviewInfo(null);
       return;
     }
-    const mount = previewRef.current;
+    const mount = canvasHostRef.current;
     let disposed = false;
     let animationFrame = 0;
     let renderer: THREE.WebGLRenderer | null = null;
     let controls: OrbitControls | null = null;
     let loaded: LoadedMmdModel | null = null;
+    let observer: ResizeObserver | null = null;
 
     const run = async (): Promise<void> => {
       setPreviewBusy(true);
@@ -149,8 +150,7 @@ export default function MmdStudio(): JSX.Element | null {
         const rim = new THREE.DirectionalLight(0xa98cff, 2);
         rim.position.set(-3, 2, -2);
         scene.add(rim);
-        const grid = new THREE.GridHelper(5, 20, 0x5d5570, 0x2c2838);
-        scene.add(grid);
+        scene.add(new THREE.GridHelper(5, 20, 0x5d5570, 0x2c2838));
 
         const resize = (): void => {
           if (!renderer) return;
@@ -161,9 +161,8 @@ export default function MmdStudio(): JSX.Element | null {
           renderer.setSize(width, height, false);
         };
         resize();
-        const observer = new ResizeObserver(resize);
+        observer = new ResizeObserver(resize);
         observer.observe(mount);
-        (mount as HTMLDivElement & { __mmdObserver?: ResizeObserver }).__mmdObserver = observer;
 
         const render = (): void => {
           animationFrame = requestAnimationFrame(render);
@@ -188,7 +187,6 @@ export default function MmdStudio(): JSX.Element | null {
     return () => {
       disposed = true;
       cancelAnimationFrame(animationFrame);
-      const observer = (mount as HTMLDivElement & { __mmdObserver?: ResizeObserver }).__mmdObserver;
       observer?.disconnect();
       controls?.dispose();
       renderer?.dispose();
@@ -309,7 +307,8 @@ export default function MmdStudio(): JSX.Element | null {
 
             <div className="mmd-body">
               <main className="mmd-preview-column">
-                <div ref={previewRef} className="mmd-preview">
+                <div className="mmd-preview">
+                  <div ref={canvasHostRef} className="mmd-canvas-host" />
                   {!modelFiles.length && (
                     <div className="mmd-preview-empty"><FileBox size={40} /><strong>Nenhum modelo MMD</strong><span>Selecione PMX/PMD com os recursos ou um ZIP completo.</span></div>
                   )}
