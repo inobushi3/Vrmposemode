@@ -26,6 +26,7 @@ export interface ModelInfo {
   humanoidValid?: boolean;
   missingRequiredBones?: string[];
   heightMeters?: number;
+  normalizedHipsHeight?: number;
   forwardAxis?: '+Z';
 }
 
