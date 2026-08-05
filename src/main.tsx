@@ -8,6 +8,7 @@ import ReferencePoseStudio from './components/ReferencePoseStudio';
 import Rtmw3dStudio from './components/Rtmw3dStudio';
 import Rtmw3dDepthControl from './components/Rtmw3dDepthControl';
 import MotionLibraryStudio from './components/MotionLibraryStudio';
+import VrmMetaVersionProbe from './components/VrmMetaVersionProbe';
 import './styles.css';
 import './timeline-custom.css';
 import './timeline-keyframe-drag.css';
@@ -20,6 +21,7 @@ import './motion-library-formats.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
+    <VrmMetaVersionProbe />
     <App />
     <TimelineDurationControls />
     <TimelineKeyframeDragLayer />
