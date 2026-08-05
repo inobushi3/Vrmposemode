@@ -51,4 +51,37 @@ const combined = [mainPath, preloadPath, rendererPath]
 assert.ok(!combined.includes('text-motion'), 'Canais IPC de geração por texto não podem permanecer.');
 assert.ok(!combined.includes('TextMotion'), 'Componentes e serviços de geração por texto não podem permanecer.');
 
-console.log('RTMW3D e retargeting: validação concluída; geração por texto removida.');
+const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+assert.equal(
+  packageJson.dependencies['@pixiv/three-vrm-animation'],
+  '3.5.5',
+  'A importação VRMA deve usar o carregador oficial alinhado à versão do three-vrm.',
+);
+
+const vrmaImporterPath = path.join(__dirname, '..', 'src', 'lib', 'vrmaImporter.ts');
+const motionLibraryPath = path.join(__dirname, '..', 'src', 'lib', 'motionLibrary.ts');
+const motionStudioPath = path.join(__dirname, '..', 'src', 'components', 'MotionLibraryStudio.tsx');
+for (const filePath of [vrmaImporterPath, motionLibraryPath, motionStudioPath]) {
+  assert.ok(fs.existsSync(filePath), `${path.basename(filePath)} precisa existir.`);
+}
+
+const vrmaImporter = fs.readFileSync(vrmaImporterPath, 'utf8');
+assert.ok(
+  vrmaImporter.includes('new VRMAnimationLoaderPlugin(parser)'),
+  'VRMA precisa ser lido pelo plugin oficial VRMC_vrm_animation.',
+);
+assert.ok(
+  vrmaImporter.includes('Number(value[0]) - rest.x'),
+  'A translação absoluta do quadril precisa virar deslocamento relativo à T-pose.',
+);
+assert.ok(
+  vrmaImporter.includes('MAX_KEYFRAMES = 12000'),
+  'A importação deve impedir timelines gigantes sem limite.',
+);
+
+const motionLibrary = fs.readFileSync(motionLibraryPath, 'utf8');
+assert.ok(motionLibrary.includes("indexedDB.open(DB_NAME, DB_VERSION)"), 'A biblioteca precisa persistir localmente em IndexedDB.');
+const rendererMain = fs.readFileSync(rendererPath, 'utf8');
+assert.ok(rendererMain.includes('<MotionLibraryStudio />'), 'A biblioteca de movimentos precisa estar montada no aplicativo.');
+
+console.log('RTMW3D, retargeting e biblioteca VRMA oficial: validação concluída.');
