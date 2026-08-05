@@ -8,17 +8,14 @@ const {
 const {
   extractJson,
   buildSystemPrompt,
+  inferRequestedActions,
+  ensureActionCoverage,
 } = require('../electron/textMotion.cjs');
 
 function almostEqual(actual, expected, epsilon = 1e-7) {
-  assert.ok(
-    Math.abs(actual - expected) <= epsilon,
-    `Esperado ${expected}, recebido ${actual}`,
-  );
+  assert.ok(Math.abs(actual - expected) <= epsilon, `Esperado ${expected}, recebido ${actual}`);
 }
 
-// Na saída SimCC com split ratio 2, o índice igual à altura da entrada
-// representa o centro do eixo Z. A fórmula antiga retornava +Z_RANGE aqui.
 almostEqual(decodeDepthIndex(INPUT_HEIGHT), 0);
 assert.ok(decodeDepthIndex(0) < 0, 'O início do eixo Z deve estar atrás do centro.');
 assert.ok(decodeDepthIndex(INPUT_HEIGHT * 2) > 0, 'O fim do eixo Z deve estar à frente do centro.');
@@ -38,6 +35,14 @@ const fenced = extractJson('```json\n{"duration":4,"frames":[{},{}]}\n```');
 assert.equal(fenced.duration, 4, 'O parser precisa aceitar JSON envolvido em markdown.');
 const surrounded = extractJson('resultado: {"duration":3,"frames":[{},{}]} fim');
 assert.equal(surrounded.duration, 3, 'O parser precisa extrair um objeto JSON balanceado.');
+
+const requested = inferRequestedActions('Dê 2 passos para frente e depois faça uma pose de herói.');
+assert.equal(requested.length, 2, 'As duas ações explícitas precisam ser reconhecidas.');
+assert.deepEqual(requested[0], { type: 'walk', steps: 2, direction: 'forward' });
+assert.deepEqual(requested[1], { type: 'heroPose' });
+const covered = ensureActionCoverage({ duration: 4, actions: [] }, 'Dê 2 passos para frente e depois faça uma pose heroica.');
+assert.deepEqual(covered.actions.map((action) => action.type), ['walk', 'heroPose']);
+
 const prompt = buildSystemPrompt({
   availableBones: ['hips', 'leftUpperArm', 'rightUpperArm'],
   fps: 30,
@@ -48,11 +53,20 @@ const prompt = buildSystemPrompt({
 });
 assert.ok(prompt.includes('Use exatamente 5.00 segundos.'), 'A duração escolhida precisa entrar no contrato do LLM.');
 assert.ok(prompt.includes('loop contínuo'), 'O contrato precisa explicitar fechamento de loop.');
-assert.ok(!prompt.includes('leftLowerLeg,'), 'O prompt deve anunciar somente ossos disponíveis quando recebidos.');
+assert.ok(prompt.includes('forward = +Z'), 'O contrato precisa fixar a direção frontal oficial do VRM.');
+assert.ok(prompt.includes('normalizedHumanBones'), 'O contrato precisa usar o humanoide normalizado do VRM.');
+assert.ok(!prompt.includes('leftLowerLeg, rightLowerLeg'), 'O prompt deve anunciar somente ossos disponíveis quando recebidos.');
+
+const proceduralPath = path.join(__dirname, '..', 'src', 'lib', 'proceduralMotion.ts');
+const procedural = fs.readFileSync(proceduralPath, 'utf8');
+assert.ok(procedural.includes("if (direction === 'backward') return [0, 0, -1];"));
+assert.ok(procedural.includes("return [0, 0, 1];"), 'Caminhar para frente precisa aumentar Z.');
+assert.ok(procedural.includes("if (action.type === 'heroPose')"), 'A pose heroica precisa ter compilador determinístico.');
+assert.ok(procedural.includes('steps: clamp'), 'A quantidade de passos precisa ser preservada e limitada.');
 
 const rendererStudioPath = path.join(__dirname, '..', 'src', 'components', 'TextMotionStudio.tsx');
 const rendererStudio = fs.readFileSync(rendererStudioPath, 'utf8');
 assert.ok(!rendererStudio.includes('localStorage'), 'Chaves e configurações do gerador não podem usar localStorage.');
 assert.ok(!rendererStudio.includes('Authorization'), 'O renderer não pode montar cabeçalhos de autenticação.');
 
-console.log('RTMW3D, retargeting e text-to-motion: validação concluída.');
+console.log('RTMW3D, retargeting e motor semântico de movimento: validação concluída.');
