@@ -63,6 +63,9 @@ const requiredFiles = [
   'src/lib/poseLibrary.ts',
   'src/components/PersonalPoseLibrary.tsx',
   'src/personal-pose-library.css',
+  'src/lib/builtinMotions.ts',
+  'src/components/BuiltinMotionLibrary.tsx',
+  'src/builtin-motion-library.css',
 ];
 for (const relativePath of requiredFiles) {
   assert.ok(fs.existsSync(path.join(__dirname, '..', relativePath)), `${relativePath} must exist.`);
@@ -83,6 +86,19 @@ const personalPoseUi = fs.readFileSync(path.join(__dirname, '..', 'src', 'compon
 assert.ok(personalPoseUi.includes('Salve primeiro um keyframe'), 'The pose library must require a real captured keyframe instead of invented angles.');
 assert.ok(personalPoseUi.includes('structuredClone(selected.pose)'), 'Saved normalized poses must be applied without mutating the library record.');
 assert.ok(personalPoseUi.includes('.vrmpose.pose.json'), 'Personal poses must support a dedicated export file.');
+
+const builtinMotion = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'builtinMotions.ts'), 'utf8');
+assert.ok(builtinMotion.includes("id: 'shy-anger'"), 'The shy anger reference motion must remain registered.');
+assert.ok(builtinMotion.includes("name: 'raiva de timidez'"), 'The requested animation name must remain exact.');
+assert.ok(builtinMotion.includes('frame(1.2, [0, 0, 0]'), 'The loop must close at exactly 1.2 seconds.');
+assert.ok(builtinMotion.includes("targetMetaVersion === '0'"), 'Built-in motion must account for VRM0 axes.');
+assert.ok(!builtinMotion.includes('hipsPosition: [0, 0,'), 'The shy anger loop must not introduce forward/backward root drift.');
+
+const builtinMotionUi = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'BuiltinMotionLibrary.tsx'), 'utf8');
+assert.ok(builtinMotionUi.includes("apply(motion.id, 'replace')"), 'The motion card must support replacing the timeline.');
+assert.ok(builtinMotionUi.includes("apply(motion.id, 'append')"), 'The motion card must support insertion at the cursor.');
+assert.ok(builtinMotionUi.includes('MutationObserver'), 'The built-in motion card must wait for the pose panel instead of silently disappearing.');
+assert.ok(builtinMotionUi.includes('setProjectName(definition.name)'), 'Replacing the timeline must name the exported animation.');
 
 const vrmaImporter = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'vrmaImporter.ts'), 'utf8');
 assert.ok(vrmaImporter.includes('new VRMAnimationLoaderPlugin(parser)'), 'VRMA must use the official loader plugin.');
@@ -115,8 +131,10 @@ assert.ok(motionLibrary.includes('indexedDB.open(DB_NAME, DB_VERSION)'), 'The mo
 const rendererMain = fs.readFileSync(rendererPath, 'utf8');
 assert.ok(rendererMain.includes('<VrmMetaVersionProbe />'), 'VRM version detection must be mounted before the editor.');
 assert.ok(rendererMain.includes('<MotionLibraryStudio />'), 'The motion library must be mounted.');
+assert.ok(rendererMain.includes('<BuiltinMotionLibrary />'), 'The built-in animation library must be mounted.');
 assert.ok(rendererMain.includes('<PersonalPoseLibrary />'), 'The personal pose library must be mounted.');
 assert.ok(rendererMain.includes("'./motion-library-formats.css'"), 'Multi-format UI styles must be loaded.');
+assert.ok(rendererMain.includes("'./builtin-motion-library.css'"), 'Built-in animation styles must be loaded.');
 assert.ok(rendererMain.includes("'./personal-pose-library.css'"), 'Personal pose library styles must be loaded.');
 
-console.log('RTMW3D, retargeting, VRM axis conversion, multi-format motion import and personal pose library validation completed.');
+console.log('RTMW3D, retargeting, VRM axis conversion, multi-format import, pose library and shy anger animation validation completed.');
