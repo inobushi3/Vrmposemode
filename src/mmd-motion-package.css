@@ -1,0 +1,3 @@
+.mmd-motion-select { width: 100%; height: 32px; padding: 0 8px; border: 1px solid rgba(255,255,255,.08); border-radius: 8px; outline: 0; color: #d9d1e2; background: #0d0b14; font-size: 8px; }
+.mmd-canvas-host { position: absolute; inset: 0; }
+.mmd-canvas-host canvas { width: 100%; height: 100%; display: block; }
