@@ -14,16 +14,4 @@ contextBridge.exposeInMainWorld('desktop', {
       return () => ipcRenderer.removeListener('rtmw3d:progress', listener);
     },
   },
-  textMotion: {
-    getSettings: () => ipcRenderer.invoke('text-motion:get-settings'),
-    saveSettings: (request) => ipcRenderer.invoke('text-motion:save-settings', request),
-    testConnection: () => ipcRenderer.invoke('text-motion:test'),
-    generate: (request) => ipcRenderer.invoke('text-motion:generate', request),
-    cancel: () => ipcRenderer.send('text-motion:cancel'),
-    onProgress: (callback) => {
-      const listener = (_event, payload) => callback(payload);
-      ipcRenderer.on('text-motion:progress', listener);
-      return () => ipcRenderer.removeListener('text-motion:progress', listener);
-    },
-  },
 });
