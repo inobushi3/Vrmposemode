@@ -5,12 +5,6 @@ const {
   decodeDepthIndex,
   INPUT_HEIGHT,
 } = require('../electron/rtmw3d.cjs');
-const {
-  extractJson,
-  buildSystemPrompt,
-  inferRequestedActions,
-  ensureActionCoverage,
-} = require('../electron/textMotion.cjs');
 
 function almostEqual(actual, expected, epsilon = 1e-7) {
   assert.ok(Math.abs(actual - expected) <= epsilon, `Esperado ${expected}, recebido ${actual}`);
@@ -31,69 +25,30 @@ assert.ok(
   'O gate antigo de confiança não pode descartar a primeira pose.',
 );
 
-const fenced = extractJson('```json\n{"duration":4,"frames":[{},{}]}\n```');
-assert.equal(fenced.duration, 4, 'O parser precisa aceitar JSON envolvido em markdown.');
-const surrounded = extractJson('resultado: {"duration":3,"frames":[{},{}]} fim');
-assert.equal(surrounded.duration, 3, 'O parser precisa extrair um objeto JSON balanceado.');
+const removedPaths = [
+  'electron/textMotion.cjs',
+  'src/components/TextMotionStudio.tsx',
+  'src/lib/textMotion.ts',
+  'src/lib/textMotionCompiler.ts',
+  'src/lib/proceduralMotion.ts',
+  'src/lib/vrmSemanticMotion.ts',
+  'src/text-motion-studio.css',
+  'THIRD_PARTY_NOTICES.md',
+];
+for (const relativePath of removedPaths) {
+  assert.ok(
+    !fs.existsSync(path.join(__dirname, '..', relativePath)),
+    `${relativePath} não pode voltar ao projeto.`,
+  );
+}
 
-const requested = inferRequestedActions('Dê 2 passos para frente e depois faça uma pose de herói.');
-assert.equal(requested.length, 2, 'As duas ações explícitas precisam ser reconhecidas.');
-assert.deepEqual(requested[0], { type: 'walk', steps: 2, direction: 'forward' });
-assert.deepEqual(requested[1], { type: 'heroPose' });
-const typoRequested = inferRequestedActions('dar 2 passo pra frente e fazer pode de heroi');
-assert.deepEqual(typoRequested.map((action) => action.type), ['walk', 'heroPose']);
-assert.equal(typoRequested[0].steps, 2);
-assert.equal(typoRequested[0].direction, 'forward');
-const covered = ensureActionCoverage({ duration: 4, actions: [] }, 'Dê 2 passos para frente e depois faça uma pose heroica.');
-assert.deepEqual(covered.actions.map((action) => action.type), ['walk', 'heroPose']);
+const mainPath = path.join(__dirname, '..', 'electron', 'main.cjs');
+const preloadPath = path.join(__dirname, '..', 'electron', 'preload.cjs');
+const rendererPath = path.join(__dirname, '..', 'src', 'main.tsx');
+const combined = [mainPath, preloadPath, rendererPath]
+  .map((filePath) => fs.readFileSync(filePath, 'utf8'))
+  .join('\n');
+assert.ok(!combined.includes('text-motion'), 'Canais IPC de geração por texto não podem permanecer.');
+assert.ok(!combined.includes('TextMotion'), 'Componentes e serviços de geração por texto não podem permanecer.');
 
-const prompt = buildSystemPrompt({
-  availableBones: ['hips', 'leftUpperArm', 'rightUpperArm'],
-  fps: 30,
-  requestedDuration: 5,
-  requestedLoop: true,
-  style: 'Natural',
-  intensity: 50,
-});
-assert.ok(prompt.includes('Use exatamente 5.00 segundos.'), 'A duração escolhida precisa entrar no contrato do LLM.');
-assert.ok(prompt.includes('loop contínuo'), 'O contrato precisa explicitar fechamento de loop.');
-assert.ok(prompt.includes('forward = +Z'), 'O contrato precisa fixar a direção frontal oficial do VRM.');
-assert.ok(prompt.includes('normalizedHumanBones'), 'O contrato precisa usar o humanoide normalizado do VRM.');
-assert.ok(!prompt.includes('leftLowerLeg, rightLowerLeg'), 'O prompt deve anunciar somente ossos disponíveis quando recebidos.');
-
-const semanticPath = path.join(__dirname, '..', 'src', 'lib', 'vrmSemanticMotion.ts');
-const semantic = fs.readFileSync(semanticPath, 'utf8');
-assert.ok(semantic.includes("? [0, 0, -1]"), 'Backward precisa usar -Z local.');
-assert.ok(semantic.includes(': [0, 0, 1];'), 'Forward precisa usar +Z local.');
-assert.ok(semantic.includes("if (action.type === 'heroPose')"), 'A pose heroica precisa ter compilador determinístico.');
-assert.ok(semantic.includes('steps: clamp'), 'A quantidade de passos precisa ser preservada e limitada.');
-assert.ok(semantic.includes('leftUpperArm: { r: [0, 0, 68] }'), 'O braço esquerdo relaxado precisa usar o eixo já validado pelo viewport.');
-assert.ok(semantic.includes('rightUpperArm: { r: [0, 0, -68] }'), 'O braço direito relaxado precisa usar o eixo já validado pelo viewport.');
-assert.ok(semantic.includes('leftUpperArm: { r: [8, 6, 52] }'), 'A pose heroica precisa reutilizar a orientação validada no editor.');
-assert.ok(semantic.includes('leftUpperArm: { r: [0, leftArmY, 68] }'), 'A caminhada deve oscilar o braço em Y sem inverter sua queda em Z.');
-
-const compilerPath = path.join(__dirname, '..', 'src', 'lib', 'textMotionCompiler.ts');
-const compiler = fs.readFileSync(compilerPath, 'utf8');
-assert.ok(
-  compiler.includes('mergeFrames(custom, deterministic)'),
-  'Ações semânticas determinísticas precisam vencer rotações livres do LLM.',
-);
-assert.ok(
-  compiler.includes('previous?.p'),
-  'A posição alcançada pela caminhada precisa continuar aplicada durante a pose final.',
-);
-assert.ok(
-  compiler.includes('REQUIRED_TEXT_MOTION_BONES.filter'),
-  'O gerador precisa recusar um VRM sem o humanoide obrigatório.',
-);
-assert.ok(
-  compiler.includes('normalizedRelaxedPose()[bone]'),
-  'Pose base e movimentos precisam compartilhar a mesma convenção normalizada.',
-);
-
-const rendererStudioPath = path.join(__dirname, '..', 'src', 'components', 'TextMotionStudio.tsx');
-const rendererStudio = fs.readFileSync(rendererStudioPath, 'utf8');
-assert.ok(!rendererStudio.includes('localStorage'), 'Chaves e configurações do gerador não podem usar localStorage.');
-assert.ok(!rendererStudio.includes('Authorization'), 'O renderer não pode montar cabeçalhos de autenticação.');
-
-console.log('RTMW3D, retargeting e motor semântico VRM: validação concluída.');
+console.log('RTMW3D e retargeting: validação concluída; geração por texto removida.');
