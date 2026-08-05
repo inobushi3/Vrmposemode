@@ -21,6 +21,7 @@ import './rtmw3d-depth-control.css';
 import './motion-library.css';
 import './motion-library-formats.css';
 import './mmd-studio.css';
+import './mmd-canvas-fix.css';
 import './personal-pose-library.css';
 
 createRoot(document.getElementById('root')!).render(
