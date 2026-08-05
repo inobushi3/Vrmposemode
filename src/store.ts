@@ -25,6 +25,7 @@ interface EditorState {
   dirtyPose: boolean;
   setProjectName: (name: string) => void;
   setModel: (info: ModelInfo | null, fileName?: string | null) => void;
+  setModelMetaVersion: (metaVersion: '0' | '1') => void;
   setAvailableBones: (bones: string[]) => void;
   selectBone: (bone: string | null) => void;
   setSelectedTransform: (transform: SelectedTransform) => void;
@@ -107,6 +108,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   setProjectName: (projectName) => set({ projectName }),
   setModel: (modelInfo, modelFileName = null) => set({ modelInfo, modelFileName }),
+  setModelMetaVersion: (metaVersion) => set((state) => ({
+    modelInfo: state.modelInfo ? { ...state.modelInfo, metaVersion } : state.modelInfo,
+  })),
   setAvailableBones: (availableBones) => set({ availableBones }),
   selectBone: (selectedBone) => set({ selectedBone }),
   setSelectedTransform: (selectedTransform) => set({ selectedTransform }),
