@@ -1,0 +1,121 @@
+.personal-pose-library-host { display: block; }
+
+.personal-pose-library {
+  padding: 0 10px 12px;
+}
+
+.personal-pose-divider {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 12px 0 8px;
+  color: #8f8799;
+  font-size: 8px;
+  font-weight: 700;
+  letter-spacing: .45px;
+  text-transform: uppercase;
+}
+.personal-pose-divider::before,
+.personal-pose-divider::after {
+  content: '';
+  height: 1px;
+  flex: 1;
+  background: rgba(255,255,255,.065);
+}
+.personal-pose-library > p {
+  margin: 0 0 9px;
+  color: #6e6678;
+  font-size: 8px;
+  line-height: 1.5;
+}
+
+.personal-pose-save-row {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) 30px 30px;
+  gap: 5px;
+}
+.personal-pose-save-row input {
+  min-width: 0;
+  height: 31px;
+  padding: 0 8px;
+  border: 1px solid rgba(255,255,255,.075);
+  border-radius: 7px;
+  outline: 0;
+  background: #0e0c15;
+  color: #dcd5e6;
+  font-size: 8px;
+}
+.personal-pose-save-row input:focus { border-color: rgba(146,121,255,.45); }
+.personal-pose-save-row button,
+.personal-pose-actions button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 5px;
+  border: 1px solid rgba(139,120,255,.19);
+  border-radius: 7px;
+  background: rgba(139,120,255,.08);
+  color: #b9aaff;
+  cursor: pointer;
+  font-size: 8px;
+}
+.personal-pose-save-row button:disabled,
+.personal-pose-actions button:disabled { opacity: .35; cursor: not-allowed; }
+
+.personal-pose-list {
+  max-height: 230px;
+  overflow: auto;
+  margin-top: 7px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+  scrollbar-width: thin;
+  scrollbar-color: #332c3e transparent;
+}
+.personal-pose-list > button {
+  min-height: 46px;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 9px;
+  border: 1px solid rgba(255,255,255,.055);
+  border-radius: 8px;
+  background: #121019;
+  color: #8e8698;
+  cursor: pointer;
+  text-align: left;
+}
+.personal-pose-list > button:hover { border-color: rgba(139,120,255,.19); }
+.personal-pose-list > button.selected { border-color: rgba(139,120,255,.35); background: rgba(139,120,255,.1); color: #c7bbff; }
+.personal-pose-list > button > span { min-width: 0; flex: 1; display: flex; flex-direction: column; gap: 3px; }
+.personal-pose-list strong { overflow: hidden; color: #d8d1e2; font-size: 9px; text-overflow: ellipsis; white-space: nowrap; }
+.personal-pose-list small { color: #686170; font-size: 7px; }
+.personal-pose-empty {
+  padding: 18px 10px;
+  border: 1px dashed rgba(255,255,255,.07);
+  border-radius: 8px;
+  color: #625b69;
+  font-size: 8px;
+  text-align: center;
+}
+
+.personal-pose-actions {
+  display: grid;
+  grid-template-columns: minmax(0,1fr) 32px 32px;
+  gap: 5px;
+  margin-top: 7px;
+}
+.personal-pose-actions button { min-height: 31px; }
+.personal-pose-actions button:first-child { background: linear-gradient(135deg,rgba(125,101,240,.18),rgba(224,91,168,.14)); color: #d7ccff; }
+.personal-pose-actions button:last-child { color: #e59aa6; border-color: rgba(230,99,117,.16); background: rgba(230,85,106,.055); }
+
+.personal-pose-error {
+  margin-top: 7px;
+  padding: 8px;
+  border: 1px solid rgba(255,100,120,.18);
+  border-radius: 7px;
+  background: rgba(255,83,105,.055);
+  color: #dda2ab;
+  font-size: 8px;
+  line-height: 1.45;
+}
