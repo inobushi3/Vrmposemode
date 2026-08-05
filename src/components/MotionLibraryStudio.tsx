@@ -118,6 +118,11 @@ export default function MotionLibraryStudio(): JSX.Element | null {
     && sklbFile
     && !sklbFile.name.toLowerCase().includes(selectedPap.skeletonCode),
   );
+  const papProgressActive = Boolean(
+    busy
+    && papProgress
+    && ['download', 'extract', 'convert'].includes(papProgress.phase),
+  );
   const canConvert = Boolean(
     selected
     && inspection
@@ -153,11 +158,13 @@ export default function MotionLibraryStudio(): JSX.Element | null {
     let active = true;
     const removeProgress = window.desktop.pap.onProgress((progress) => {
       if (!active) return;
-      setPapProgress(progress);
+      setPapProgress(progress.phase === 'ready' || progress.phase === 'done' ? null : progress);
       setMessage(progress.message);
     });
     void window.desktop.pap.status().then((status) => {
-      if (active) setPapStatus(status);
+      if (!active) return;
+      setPapStatus(status);
+      if (status.installed) setPapProgress(null);
     }).catch(() => {
       if (active) setPapStatus(null);
     });
@@ -205,6 +212,8 @@ export default function MotionLibraryStudio(): JSX.Element | null {
     setPapEntries([]);
     setResult(null);
     setChoiceKey('');
+    setSklbFile(null);
+    setPapProgress(null);
     if (!selected) return;
     let cancelled = false;
     setBusy(true);
@@ -215,7 +224,7 @@ export default function MotionLibraryStudio(): JSX.Element | null {
       setInspection(value);
       setPapEntries(detectedPap);
       if (detectedPap.length) {
-        setMessage(`${detectedPap.length} animação(ões) PAP encontrada(s). Escolha o SKLB correspondente para converter.`);
+        setMessage(`${detectedPap.length} animação(ões) PAP encontrada(s). Nenhuma conversão está rodando: selecione o SKLB correspondente.`);
       } else {
         setMessage(value.convertible
           ? `${MOTION_FORMAT_LABELS[value.format]} pronto para conversão.`
@@ -248,8 +257,10 @@ export default function MotionLibraryStudio(): JSX.Element | null {
       setInspection(info);
       setPapEntries(detectedPap);
       setChoiceKey('');
+      setSklbFile(null);
+      setPapProgress(null);
       setMessage(detectedPap.length
-        ? `${record.name} salvo. Foram encontradas ${detectedPap.length} animações PAP; selecione o SKLB para converter.`
+        ? `${record.name} salvo. Nenhuma conversão está rodando: selecione o SKLB para começar.`
         : info.convertible
           ? `${record.name} salvo e pronto para converter.`
           : `${record.name} salvo, mas não contém uma animação esquelética conversível.`);
@@ -270,6 +281,8 @@ export default function MotionLibraryStudio(): JSX.Element | null {
       setInspection(null);
       setPapEntries([]);
       setResult(null);
+      setSklbFile(null);
+      setPapProgress(null);
       setMessage('Movimento removido da biblioteca local.');
     } catch (deleteError) {
       setError(readableError(deleteError));
@@ -290,10 +303,13 @@ export default function MotionLibraryStudio(): JSX.Element | null {
     try {
       const status = await bridge.prepare();
       setPapStatus(status);
-      setMessage('Conversor XAT preparado e pronto para PAP/SKLB.');
+      setMessage(sklbFile
+        ? 'Conversor XAT preparado. Clique em Converter PAP para timeline.'
+        : `Conversor XAT preparado. Nenhuma conversão está rodando; selecione ${expectedSklbName}.`);
     } catch (prepareError) {
       setError(readableError(prepareError));
     } finally {
+      setPapProgress(null);
       setBusy(false);
     }
   };
@@ -307,6 +323,7 @@ export default function MotionLibraryStudio(): JSX.Element | null {
       rootScale,
       clipIndex: selectedChoice.kind === 'standard' ? selectedChoice.clipIndex : 0,
       targetHeight: modelInfo.heightMeters ?? 1.65,
+      targetMetaVersion: modelInfo.metaVersion,
     };
 
     if (selectedChoice.kind === 'standard') {
@@ -379,6 +396,7 @@ export default function MotionLibraryStudio(): JSX.Element | null {
     } catch (applyError) {
       setError(readableError(applyError));
     } finally {
+      setPapProgress(null);
       setBusy(false);
     }
   };
@@ -424,6 +442,10 @@ export default function MotionLibraryStudio(): JSX.Element | null {
               setSklbFile(file);
               setResult(null);
               setError('');
+              setPapProgress(null);
+              setMessage(file
+                ? `${file.name} selecionado. Clique em Converter PAP para timeline.`
+                : `Nenhuma conversão está rodando; selecione ${expectedSklbName}.`);
               event.currentTarget.value = '';
             }} />
 
@@ -463,7 +485,11 @@ export default function MotionLibraryStudio(): JSX.Element | null {
                     </div>
 
                     {choices.length > 1 && (
-                      <label className="motion-library-clip-select"><span>Clipe ou animação do pacote</span><select value={selectedChoice?.key ?? ''} onChange={(event) => setChoiceKey(event.target.value)}>{choices.map((choice) => <option key={choice.key} value={choice.key}>{choice.kind === 'pap' ? `[PAP${choice.pap.skeletonCode ? ` ${choice.pap.skeletonCode}` : ''}] ` : ''}{choice.name}{choice.duration ? ` · ${choice.duration.toFixed(2)}s` : ''}</option>)}</select></label>
+                      <label className="motion-library-clip-select"><span>Clipe ou animação do pacote</span><select value={selectedChoice?.key ?? ''} onChange={(event) => {
+                        setChoiceKey(event.target.value);
+                        setSklbFile(null);
+                        setPapProgress(null);
+                      }}>{choices.map((choice) => <option key={choice.key} value={choice.key}>{choice.kind === 'pap' ? `[PAP${choice.pap.skeletonCode ? ` ${choice.pap.skeletonCode}` : ''}] ` : ''}{choice.name}{choice.duration ? ` · ${choice.duration.toFixed(2)}s` : ''}</option>)}</select></label>
                     )}
 
                     {selectedChoice?.kind === 'pap' && (
@@ -476,9 +502,21 @@ export default function MotionLibraryStudio(): JSX.Element | null {
                             {papStatus?.installed ? 'XAT preparado' : 'Preparar conversor XAT'}
                           </button>
                         </div>
+                        <div className={`motion-pap-waiting ${sklbFile ? 'ready' : ''}`}>
+                          <KeyRound size={14} />
+                          <span>{sklbFile
+                            ? `${sklbFile.name} selecionado. O botão de conversão está pronto.`
+                            : `Aguardando ${expectedSklbName}. O app não está processando nada agora.`}</span>
+                        </div>
                         <div className="motion-pap-status">
-                          <span>{papStatus?.supported === false ? 'PAP/Havok exige Windows.' : papStatus?.installed ? 'Runtime XATHavokInterop instalado localmente.' : 'O XAT oficial será baixado uma vez e reutilizado offline.'}</span>
-                          {papProgress && <div><i style={{ width: `${Math.max(2, Math.min(100, papProgress.progress * 100))}%` }} /></div>}
+                          <span>{papStatus?.supported === false
+                            ? 'PAP/Havok exige Windows.'
+                            : papProgressActive && papProgress
+                              ? papProgress.message
+                              : papStatus?.installed
+                                ? 'Runtime XATHavokInterop instalado e ocioso.'
+                                : 'O XAT oficial será baixado uma vez e reutilizado offline.'}</span>
+                          {papProgressActive && papProgress && <div><i style={{ width: `${Math.max(2, Math.min(100, papProgress.progress * 100))}%` }} /></div>}
                         </div>
                         {sklbMismatch && <div className="motion-library-warning"><AlertTriangle size={14} /><span>Esse PAP usa {selectedPap?.skeletonCode}, mas você escolheu {sklbFile?.name}. Selecione {expectedSklbName}.</span></div>}
                       </section>
@@ -492,7 +530,7 @@ export default function MotionLibraryStudio(): JSX.Element | null {
                     </div>
 
                     <div className="motion-library-note">
-                      O app executa a animação no esqueleto original, calcula a diferença para a pose de repouso e converte essa diferença para o humanoide VRM. O resultado vira keyframes comuns e pode ser exportado como VRMA.
+                      O app executa a animação no esqueleto original, separa o motion root do quadril anatômico, calcula a diferença para a pose de repouso e converte o resultado para o humanoide VRM. O movimento de saída do lugar é gravado no canal de posição dos quadris.
                     </div>
 
                     {inspection?.packageEntries && (
