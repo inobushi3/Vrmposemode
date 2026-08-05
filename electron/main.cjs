@@ -1,11 +1,9 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const { Rtmw3dService } = require('./rtmw3d.cjs');
-const { TextMotionService } = require('./textMotion.cjs');
 
 let mainWindow;
 let rtmw3dService;
-let textMotionService;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -62,32 +60,10 @@ ipcMain.handle('rtmw3d:infer', async (_event, request) => {
   return rtmw3dService.infer(request);
 });
 
-ipcMain.handle('text-motion:get-settings', async () => {
-  if (!textMotionService) throw new Error('O gerador por texto ainda não foi inicializado.');
-  return textMotionService.getSettings();
-});
-ipcMain.handle('text-motion:save-settings', async (_event, request) => {
-  if (!textMotionService) throw new Error('O gerador por texto ainda não foi inicializado.');
-  return textMotionService.saveSettings(request);
-});
-ipcMain.handle('text-motion:test', async () => {
-  if (!textMotionService) throw new Error('O gerador por texto ainda não foi inicializado.');
-  return textMotionService.testConnection();
-});
-ipcMain.handle('text-motion:generate', async (_event, request) => {
-  if (!textMotionService) throw new Error('O gerador por texto ainda não foi inicializado.');
-  return textMotionService.generate(request);
-});
-ipcMain.on('text-motion:cancel', () => textMotionService?.cancel());
-
 app.whenReady().then(() => {
   rtmw3dService = new Rtmw3dService({
     app,
     onProgress: (payload) => mainWindow?.webContents.send('rtmw3d:progress', payload),
-  });
-  textMotionService = new TextMotionService({
-    app,
-    onProgress: (payload) => mainWindow?.webContents.send('text-motion:progress', payload),
   });
   createWindow();
 });
@@ -95,7 +71,6 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
 });
 app.on('before-quit', () => {
-  textMotionService?.cancel();
   void rtmw3dService?.dispose();
 });
 app.on('activate', () => {
