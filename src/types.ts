@@ -7,12 +7,28 @@ export interface BonePose {
 }
 
 export type PoseSnapshot = Record<string, BonePose>;
+export type ExpressionSnapshot = Record<string, number>;
 
 export interface Keyframe {
   id: string;
   time: number;
   pose: PoseSnapshot;
+  expressions?: ExpressionSnapshot;
   easing: 'linear' | 'smooth' | 'step';
+}
+
+export interface HumanoidRigBoneSnapshot {
+  parent: string | null;
+  restLocalRotation: QuatTuple;
+  restWorldRotation: QuatTuple;
+  restWorldPosition: Vec3Tuple;
+}
+
+export interface HumanoidRigSnapshot {
+  rootWorldRotation: QuatTuple;
+  heightMeters: number;
+  hipsHeight: number;
+  bones: Record<string, HumanoidRigBoneSnapshot>;
 }
 
 export interface ModelInfo {
@@ -21,7 +37,15 @@ export interface ModelInfo {
   avatarName?: string;
   author?: string;
   version?: string;
+  metaVersion?: '0' | '1';
   boneCount: number;
+  availableExpressions?: string[];
+  humanoidValid?: boolean;
+  missingRequiredBones?: string[];
+  heightMeters?: number;
+  normalizedHipsHeight?: number;
+  forwardAxis?: '+Z';
+  humanoidRig?: HumanoidRigSnapshot;
 }
 
 export interface ProjectFile {

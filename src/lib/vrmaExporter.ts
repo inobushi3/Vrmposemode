@@ -1,11 +1,13 @@
 import { HUMAN_BONES, REQUIRED_VRMA_BONES } from '../constants';
 import type { Keyframe, PoseSnapshot, QuatTuple, Vec3Tuple } from '../types';
+import { useEditorStore } from '../store';
 
 interface ExportOptions {
   name: string;
   keyframes: Keyframe[];
   duration: number;
   interpolation: 'LINEAR' | 'STEP';
+  sourceMetaVersion?: '0' | '1';
 }
 
 interface BufferView {
@@ -59,10 +61,27 @@ class BinaryBuilder {
 
 const IDENTITY: QuatTuple = [0, 0, 0, 1];
 const ZERO: Vec3Tuple = [0, 0, 0];
+const EXPRESSION_PRESETS = new Set([
+  'happy', 'angry', 'sad', 'relaxed', 'surprised',
+  'aa', 'ih', 'ou', 'ee', 'oh',
+  'blink', 'blinkLeft', 'blinkRight', 'neutral',
+]);
+const BLOCKED_OBJECT_KEYS = new Set(['__proto__', 'prototype', 'constructor']);
 
 function normalizeQuaternion(q: QuatTuple): QuatTuple {
   const length = Math.hypot(q[0], q[1], q[2], q[3]) || 1;
   return [q[0] / length, q[1] / length, q[2] / length, q[3] / length];
+}
+
+function canonicalRotation(rotation: QuatTuple, sourceMetaVersion?: '0' | '1'): QuatTuple {
+  const normalized = normalizeQuaternion(rotation);
+  if (sourceMetaVersion !== '0') return normalized;
+  return [-normalized[0], normalized[1], -normalized[2], normalized[3]];
+}
+
+function canonicalPosition(position: Vec3Tuple, sourceMetaVersion?: '0' | '1'): Vec3Tuple {
+  if (sourceMetaVersion !== '0') return position;
+  return [-position[0], position[1], -position[2]];
 }
 
 function ensureFrames(keyframes: Keyframe[], duration: number): Keyframe[] {
@@ -74,24 +93,39 @@ function ensureFrames(keyframes: Keyframe[], duration: number): Keyframe[] {
   return frames;
 }
 
-function poseValue(pose: PoseSnapshot, bone: string): { rotation: QuatTuple; position: Vec3Tuple } {
+function poseValue(
+  pose: PoseSnapshot,
+  bone: string,
+  sourceMetaVersion?: '0' | '1',
+): { rotation: QuatTuple; position: Vec3Tuple } {
   const value = pose[bone];
   return {
-    rotation: normalizeQuaternion(value?.rotation ?? IDENTITY),
-    position: value?.position ?? ZERO,
+    rotation: canonicalRotation(value?.rotation ?? IDENTITY, sourceMetaVersion),
+    position: canonicalPosition(value?.position ?? ZERO, sourceMetaVersion),
   };
+}
+
+function expressionValue(frame: Keyframe, name: string): number {
+  return Math.max(0, Math.min(1, Number(frame.expressions?.[name]) || 0));
 }
 
 export function exportVrma(options: ExportOptions): ArrayBuffer {
   const frames = ensureFrames(options.keyframes, options.duration);
   const times = frames.map((frame) => Math.max(0, frame.time));
   const maxTime = Math.max(...times, 0.001);
+  const sourceMetaVersion = options.sourceMetaVersion
+    ?? useEditorStore.getState().modelInfo?.metaVersion;
 
   const animatedBones = new Set<string>(REQUIRED_VRMA_BONES);
+  const animatedExpressions = new Set<string>();
   for (const frame of frames) {
     for (const bone of Object.keys(frame.pose)) animatedBones.add(bone);
+    for (const name of Object.keys(frame.expressions ?? {})) {
+      if (name && !BLOCKED_OBJECT_KEYS.has(name)) animatedExpressions.add(name);
+    }
   }
   const bones = HUMAN_BONES.filter((bone) => animatedBones.has(bone));
+  const expressionNames = [...animatedExpressions].sort((a, b) => a.localeCompare(b));
 
   const builder = new BinaryBuilder();
   const bufferViews: BufferView[] = [];
@@ -104,7 +138,7 @@ export function exportVrma(options: ExportOptions): ArrayBuffer {
   };
 
   const timeAccessor = addAccessor(times, 'SCALAR', times.length, [Math.min(...times)], [maxTime]);
-  const nodes = bones.map((bone) => ({ name: bone }));
+  const nodes: Array<{ name: string; translation?: Vec3Tuple }> = bones.map((bone) => ({ name: bone }));
   const humanBones: Record<string, { node: number }> = {};
   bones.forEach((bone, index) => { humanBones[bone] = { node: index }; });
 
@@ -112,7 +146,7 @@ export function exportVrma(options: ExportOptions): ArrayBuffer {
   const channels: Array<{ sampler: number; target: { node: number; path: 'rotation' | 'translation' } }> = [];
 
   bones.forEach((bone, nodeIndex) => {
-    const rotations = frames.flatMap((frame) => poseValue(frame.pose, bone).rotation);
+    const rotations = frames.flatMap((frame) => poseValue(frame.pose, bone, sourceMetaVersion).rotation);
     const rotationAccessor = addAccessor(rotations, 'VEC4', frames.length);
     const sampler = samplers.push({ input: timeAccessor, output: rotationAccessor, interpolation: options.interpolation }) - 1;
     channels.push({ sampler, target: { node: nodeIndex, path: 'rotation' } });
@@ -120,10 +154,40 @@ export function exportVrma(options: ExportOptions): ArrayBuffer {
 
   const hipsIndex = bones.indexOf('hips');
   if (hipsIndex >= 0) {
-    const translations = frames.flatMap((frame) => poseValue(frame.pose, 'hips').position);
+    const translations = frames.flatMap((frame) => poseValue(frame.pose, 'hips', sourceMetaVersion).position);
     const translationAccessor = addAccessor(translations, 'VEC3', frames.length);
     const sampler = samplers.push({ input: timeAccessor, output: translationAccessor, interpolation: options.interpolation }) - 1;
     channels.push({ sampler, target: { node: hipsIndex, path: 'translation' } });
+  }
+
+  const expressionPreset: Record<string, { node: number }> = Object.create(null) as Record<string, { node: number }>;
+  const expressionCustom: Record<string, { node: number }> = Object.create(null) as Record<string, { node: number }>;
+  for (const name of expressionNames) {
+    const nodeIndex = nodes.push({ name: `expression:${name}`, translation: [0, 0, 0] }) - 1;
+    const values = frames.flatMap((frame) => [expressionValue(frame, name), 0, 0]);
+    const accessor = addAccessor(values, 'VEC3', frames.length);
+    const sampler = samplers.push({ input: timeAccessor, output: accessor, interpolation: options.interpolation }) - 1;
+    channels.push({ sampler, target: { node: nodeIndex, path: 'translation' } });
+    if (EXPRESSION_PRESETS.has(name)) expressionPreset[name] = { node: nodeIndex };
+    else expressionCustom[name] = { node: nodeIndex };
+  }
+
+  const animationExtension: {
+    specVersion: string;
+    humanoid: { humanBones: Record<string, { node: number }> };
+    expressions?: {
+      preset?: Record<string, { node: number }>;
+      custom?: Record<string, { node: number }>;
+    };
+  } = {
+    specVersion: '1.0',
+    humanoid: { humanBones },
+  };
+  if (expressionNames.length) {
+    animationExtension.expressions = {
+      ...(Object.keys(expressionPreset).length ? { preset: expressionPreset } : {}),
+      ...(Object.keys(expressionCustom).length ? { custom: expressionCustom } : {}),
+    };
   }
 
   const binary = builder.build();
@@ -132,10 +196,7 @@ export function exportVrma(options: ExportOptions): ArrayBuffer {
     extensionsUsed: ['VRMC_vrm_animation'],
     extensionsRequired: ['VRMC_vrm_animation'],
     extensions: {
-      VRMC_vrm_animation: {
-        specVersion: '1.0',
-        humanoid: { humanBones },
-      },
+      VRMC_vrm_animation: animationExtension,
     },
     scene: 0,
     scenes: [{ nodes: nodes.map((_, index) => index) }],

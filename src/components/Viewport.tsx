@@ -6,7 +6,13 @@ import { TransformControls } from 'three/addons/controls/TransformControls.js';
 import { VRMLoaderPlugin, VRMUtils, type VRM } from '@pixiv/three-vrm';
 import { HUMAN_BONES } from '../constants';
 import { useEditorStore } from '../store';
-import type { BonePose, PoseSnapshot, QuatTuple, Vec3Tuple } from '../types';
+import type {
+  BonePose,
+  ExpressionSnapshot,
+  PoseSnapshot,
+  QuatTuple,
+  Vec3Tuple,
+} from '../types';
 import { editorEvent } from '../lib/events';
 import { exportVrma } from '../lib/vrmaExporter';
 
@@ -31,16 +37,25 @@ interface LoadedModel {
   fileName: string;
 }
 
+interface InterpolatedFrame {
+  pose: PoseSnapshot;
+  expressions: ExpressionSnapshot;
+}
+
 const DEG = THREE.MathUtils.RAD2DEG;
 const RAD = THREE.MathUtils.DEG2RAD;
 
 function tupleQuat(value: unknown): QuatTuple {
-  if (Array.isArray(value) && value.length >= 4) return [Number(value[0]), Number(value[1]), Number(value[2]), Number(value[3])];
+  if (Array.isArray(value) && value.length >= 4) {
+    return [Number(value[0]), Number(value[1]), Number(value[2]), Number(value[3])];
+  }
   return [0, 0, 0, 1];
 }
 
 function tupleVec(value: unknown): Vec3Tuple {
-  if (Array.isArray(value) && value.length >= 3) return [Number(value[0]), Number(value[1]), Number(value[2])];
+  if (Array.isArray(value) && value.length >= 3) {
+    return [Number(value[0]), Number(value[1]), Number(value[2])];
+  }
   return [0, 0, 0];
 }
 
@@ -57,61 +72,13 @@ function downloadBlob(blob: Blob, fileName: string): void {
   setTimeout(() => URL.revokeObjectURL(url), 1000);
 }
 
-function eulerQuaternion(x: number, y: number, z: number): QuatTuple {
-  return new THREE.Quaternion().setFromEuler(new THREE.Euler(x * RAD, y * RAD, z * RAD, 'XYZ')).toArray() as QuatTuple;
-}
-
-function presetPose(id: string): PoseSnapshot {
-  if (id === 'tpose') return {};
-  const pose: PoseSnapshot = {};
-  const set = (bone: string, xyz: Vec3Tuple) => { pose[bone] = { rotation: eulerQuaternion(...xyz) }; };
-
-  if (id === 'relaxed') {
-    set('leftUpperArm', [0, 0, 68]);
-    set('rightUpperArm', [0, 0, -68]);
-    set('leftLowerArm', [0, 0, -12]);
-    set('rightLowerArm', [0, 0, 12]);
-    set('spine', [0, 0, -2]);
-    set('head', [1, 0, 2]);
-  } else if (id === 'wave') {
-    set('leftUpperArm', [0, 0, 72]);
-    set('rightUpperArm', [10, -5, -145]);
-    set('rightLowerArm', [0, 12, -70]);
-    set('rightHand', [0, 0, -18]);
-    set('spine', [0, 0, -4]);
-    set('head', [0, -4, 4]);
-  } else if (id === 'hero') {
-    set('leftUpperArm', [8, 6, 52]);
-    set('rightUpperArm', [8, -6, -52]);
-    set('leftLowerArm', [0, 10, -78]);
-    set('rightLowerArm', [0, -10, 78]);
-    set('leftUpperLeg', [-3, 0, 4]);
-    set('rightUpperLeg', [5, 0, -8]);
-    set('spine', [-4, 0, 0]);
-    set('chest', [-3, 0, 0]);
-  } else if (id === 'cute') {
-    set('leftUpperArm', [15, -20, 118]);
-    set('rightUpperArm', [15, 20, -118]);
-    set('leftLowerArm', [-10, 0, -95]);
-    set('rightLowerArm', [-10, 0, 95]);
-    set('leftHand', [5, 0, -18]);
-    set('rightHand', [5, 0, 18]);
-    set('head', [2, -8, 6]);
-    set('spine', [0, 0, -3]);
-  } else if (id === 'sit') {
-    set('leftUpperLeg', [-78, 0, 5]);
-    set('rightUpperLeg', [-78, 0, -5]);
-    set('leftLowerLeg', [92, 0, 0]);
-    set('rightLowerLeg', [92, 0, 0]);
-    set('leftFoot', [-12, 0, 0]);
-    set('rightFoot', [-12, 0, 0]);
-    set('leftUpperArm', [0, 0, 74]);
-    set('rightUpperArm', [0, 0, -74]);
-    set('leftLowerArm', [-20, 0, -35]);
-    set('rightLowerArm', [-20, 0, 35]);
-    set('hips', [4, 0, 0]);
-  }
-  return pose;
+function expressionNames(vrm: VRM | null): string[] {
+  const manager = vrm?.expressionManager;
+  if (!manager) return [];
+  const map = manager.expressionMap as Record<string, unknown> | undefined;
+  const names = map ? Object.keys(map) : [];
+  if (names.length) return names.sort();
+  return manager.expressions.map((expression) => expression.expressionName).sort();
 }
 
 export default function Viewport(): JSX.Element {
@@ -162,6 +129,17 @@ export default function Viewport(): JSX.Element {
     return pose;
   };
 
+  const captureExpressions = (): ExpressionSnapshot => {
+    const manager = modelRef.current?.vrm?.expressionManager;
+    if (!manager) return {};
+    const result: ExpressionSnapshot = {};
+    for (const name of expressionNames(modelRef.current?.vrm ?? null)) {
+      const value = manager.getValue(name);
+      if (value != null && Math.abs(value) > 0.000001) result[name] = Math.max(0, Math.min(1, value));
+    }
+    return result;
+  };
+
   const applyPose = (pose: PoseSnapshot): void => {
     const model = modelRef.current;
     if (!model) return;
@@ -180,11 +158,27 @@ export default function Viewport(): JSX.Element {
     updateSelectedTransform();
   };
 
-  const interpolatePose = (time: number): PoseSnapshot | null => {
+  const applyExpressions = (expressions: ExpressionSnapshot): void => {
+    const manager = modelRef.current?.vrm?.expressionManager;
+    if (!manager) return;
+    manager.resetValues();
+    for (const [name, rawValue] of Object.entries(expressions)) {
+      if (manager.getExpression(name) == null) continue;
+      manager.setValue(name, Math.max(0, Math.min(1, Number(rawValue) || 0)));
+    }
+    manager.update();
+  };
+
+  const interpolateFrame = (time: number): InterpolatedFrame | null => {
     const frames = useEditorStore.getState().keyframes;
     if (!frames.length) return null;
-    if (time <= frames[0].time) return frames[0].pose;
-    if (time >= frames[frames.length - 1].time) return frames[frames.length - 1].pose;
+    if (time <= frames[0].time) {
+      return { pose: frames[0].pose, expressions: frames[0].expressions ?? {} };
+    }
+    if (time >= frames[frames.length - 1].time) {
+      const last = frames[frames.length - 1];
+      return { pose: last.pose, expressions: last.expressions ?? {} };
+    }
 
     let left = frames[0];
     let right = frames[frames.length - 1];
@@ -201,9 +195,9 @@ export default function Viewport(): JSX.Element {
     if (left.easing === 'step') alpha = 0;
     if (left.easing === 'smooth') alpha = alpha * alpha * (3 - 2 * alpha);
 
-    const result: PoseSnapshot = {};
-    const names = new Set([...Object.keys(left.pose), ...Object.keys(right.pose)]);
-    for (const name of names) {
+    const pose: PoseSnapshot = {};
+    const boneNames = new Set([...Object.keys(left.pose), ...Object.keys(right.pose)]);
+    for (const name of boneNames) {
       const a = left.pose[name] ?? right.pose[name];
       const b = right.pose[name] ?? left.pose[name];
       if (!a || !b) continue;
@@ -216,14 +210,27 @@ export default function Viewport(): JSX.Element {
         const pb = new THREE.Vector3().fromArray(b.position ?? [0, 0, 0]);
         value.position = pa.lerp(pb, alpha).toArray() as Vec3Tuple;
       }
-      result[name] = value;
+      pose[name] = value;
     }
-    return result;
+
+    const expressions: ExpressionSnapshot = {};
+    const expressionSet = new Set([
+      ...Object.keys(left.expressions ?? {}),
+      ...Object.keys(right.expressions ?? {}),
+    ]);
+    for (const name of expressionSet) {
+      const a = left.expressions?.[name] ?? 0;
+      const b = right.expressions?.[name] ?? 0;
+      expressions[name] = a + (b - a) * alpha;
+    }
+    return { pose, expressions };
   };
 
   const applyAnimationAt = (time: number): void => {
-    const pose = interpolatePose(time);
-    if (pose) applyPose(pose);
+    const frame = interpolateFrame(time);
+    if (!frame) return;
+    applyPose(frame.pose);
+    applyExpressions(frame.expressions);
   };
 
   const frameCamera = (view: string = 'full'): void => {
@@ -237,7 +244,6 @@ export default function Viewport(): JSX.Element {
     const target = center.clone();
     let position = new THREE.Vector3(center.x, center.y + height * 0.05, center.z + height * 1.45);
 
-    if (view === 'front') position = new THREE.Vector3(center.x, center.y + height * 0.05, center.z + height * 1.45);
     if (view === 'back') position = new THREE.Vector3(center.x, center.y + height * 0.05, center.z - height * 1.45);
     if (view === 'left') position = new THREE.Vector3(center.x - height * 1.45, center.y + height * 0.05, center.z);
     if (view === 'right') position = new THREE.Vector3(center.x + height * 1.45, center.y + height * 0.05, center.z);
@@ -274,7 +280,12 @@ export default function Viewport(): JSX.Element {
     const handles = new Map<string, THREE.Mesh>();
     const geometry = new THREE.SphereGeometry(0.018, 12, 8);
     for (const [name] of bones) {
-      const material = new THREE.MeshBasicMaterial({ color: name.includes('left') ? 0x8c7cff : name.includes('right') ? 0xff76b9 : 0x72e6ff, depthTest: false, transparent: true, opacity: 0.9 });
+      const material = new THREE.MeshBasicMaterial({
+        color: name.includes('left') ? 0x8c7cff : name.includes('right') ? 0xff76b9 : 0x72e6ff,
+        depthTest: false,
+        transparent: true,
+        opacity: 0.9,
+      });
       const handle = new THREE.Mesh(geometry, material);
       handle.renderOrder = 1000;
       handle.userData.boneName = name;
@@ -334,6 +345,9 @@ export default function Viewport(): JSX.Element {
       const meta = vrm?.meta as unknown as Record<string, unknown> | undefined;
       const authors = meta?.authors;
       const author = Array.isArray(authors) ? authors.join(', ') : typeof meta?.author === 'string' ? meta.author : undefined;
+      const box = new THREE.Box3().setFromObject(root);
+      const heightMeters = Math.max(0.001, box.max.y - box.min.y);
+      const availableExpressions = expressionNames(vrm);
       useEditorStore.getState().setModel({
         name: file.name,
         format: extension === 'vrm' ? 'VRM' : extension === 'glb' ? 'GLB' : 'GLTF',
@@ -341,11 +355,13 @@ export default function Viewport(): JSX.Element {
         author,
         version: typeof meta?.version === 'string' ? meta.version : undefined,
         boneCount: bones.size,
+        heightMeters,
+        availableExpressions,
       }, file.name);
       useEditorStore.getState().setAvailableBones([...bones.keys()]);
       useEditorStore.getState().selectBone(bones.has('hips') ? 'hips' : bones.keys().next().value ?? null);
       useEditorStore.getState().setStatus(vrm
-        ? `${file.name} carregado com ${bones.size} ossos humanoides.`
+        ? `${file.name} carregado com ${bones.size} ossos e ${availableExpressions.length} expressões.`
         : `${file.name} carregado. Para exportar VRMA, use um modelo VRM com humanoide.`);
       frameCamera('full');
       if (useEditorStore.getState().keyframes.length) applyAnimationAt(useEditorStore.getState().currentTime);
@@ -366,7 +382,12 @@ export default function Viewport(): JSX.Element {
     const camera = new THREE.PerspectiveCamera(34, 1, 0.01, 100);
     camera.position.set(0, 1.25, 3.2);
 
-    const renderer = new THREE.WebGLRenderer({ antialias: true, alpha: false, preserveDrawingBuffer: true, powerPreference: 'high-performance' });
+    const renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      alpha: false,
+      preserveDrawingBuffer: true,
+      powerPreference: 'high-performance',
+    });
     renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
     renderer.shadowMap.enabled = true;
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -389,7 +410,6 @@ export default function Viewport(): JSX.Element {
     scene.add(transform.getHelper());
 
     const grid = new THREE.GridHelper(20, 40, 0x5e5675, 0x2d283d);
-    grid.position.y = 0;
     scene.add(grid);
 
     const floor = new THREE.Mesh(
@@ -401,8 +421,7 @@ export default function Viewport(): JSX.Element {
     floor.receiveShadow = true;
     scene.add(floor);
 
-    const hemi = new THREE.HemisphereLight(0xc6d8ff, 0x2a1838, 2.2);
-    scene.add(hemi);
+    scene.add(new THREE.HemisphereLight(0xc6d8ff, 0x2a1838, 2.2));
     const key = new THREE.DirectionalLight(0xffffff, 3.2);
     key.position.set(2.6, 4.5, 3.5);
     key.castShadow = true;
@@ -418,8 +437,16 @@ export default function Viewport(): JSX.Element {
     const helpers = new THREE.Group();
     scene.add(helpers);
     runtimeRef.current = {
-      scene, camera, renderer, orbit, transform, clock: new THREE.Clock(), grid, helpers,
-      raycaster: new THREE.Raycaster(), pointer: new THREE.Vector2(),
+      scene,
+      camera,
+      renderer,
+      orbit,
+      transform,
+      clock: new THREE.Clock(),
+      grid,
+      helpers,
+      raycaster: new THREE.Raycaster(),
+      pointer: new THREE.Vector2(),
     };
 
     const resize = (): void => {
@@ -468,8 +495,7 @@ export default function Viewport(): JSX.Element {
       for (const [name, handle] of model.handles) {
         const node = model.bones.get(name);
         if (node) node.getWorldPosition(handle.position);
-        const selected = useEditorStore.getState().selectedBone === name;
-        handle.scale.setScalar(selected ? 1.55 : 1);
+        handle.scale.setScalar(useEditorStore.getState().selectedBone === name ? 1.55 : 1);
       }
     };
 
@@ -568,10 +594,12 @@ export default function Viewport(): JSX.Element {
         return;
       }
       const state = useEditorStore.getState();
+      const expressions = captureExpressions();
       state.upsertKeyframe({
         id: crypto.randomUUID(),
         time: state.currentTime,
         pose: capturePose(),
+        ...(Object.keys(expressions).length ? { expressions } : {}),
         easing: 'smooth',
       });
       state.setStatus(`Keyframe salvo em ${state.currentTime.toFixed(2)}s.`);
@@ -579,19 +607,24 @@ export default function Viewport(): JSX.Element {
     const onResetPose = (): void => {
       const model = modelRef.current;
       if (!model) return;
+      if (model.vrm) {
+        model.vrm.humanoid.resetNormalizedPose();
+        model.vrm.expressionManager?.resetValues();
+        model.vrm.expressionManager?.update();
+      } else {
+        for (const node of model.bones.values()) node.quaternion.identity();
+      }
+      updateSelectedTransform();
+      useEditorStore.getState().setDirtyPose(true);
+    };
+    const onPreset = (): void => {
+      const model = modelRef.current;
+      if (!model) return;
       if (model.vrm) model.vrm.humanoid.resetNormalizedPose();
       else for (const node of model.bones.values()) node.quaternion.identity();
       updateSelectedTransform();
       useEditorStore.getState().setDirtyPose(true);
-    };
-    const onPreset = (event: Event): void => {
-      const id = (event as CustomEvent<string>).detail;
-      const model = modelRef.current;
-      if (!model) return;
-      if (model.vrm) model.vrm.humanoid.resetNormalizedPose();
-      applyPose(presetPose(id));
-      useEditorStore.getState().setDirtyPose(true);
-      useEditorStore.getState().setStatus('Pose aplicada. Salve um keyframe para colocá-la na timeline.');
+      useEditorStore.getState().setStatus('T-Pose aplicada. Salve um keyframe para colocá-la na timeline.');
     };
     const onSetRotation = (event: Event): void => {
       const model = modelRef.current;
@@ -638,7 +671,7 @@ export default function Viewport(): JSX.Element {
           interpolation: state.interpolation,
         });
         downloadBlob(new Blob([buffer], { type: 'model/gltf-binary' }), `${safeName(state.projectName)}.vrma`);
-        state.setStatus('VRMA exportado com sucesso.');
+        state.setStatus('VRMA exportado com corpo e expressões faciais.');
       } catch (error) {
         state.setStatus(error instanceof Error ? error.message : 'Falha ao exportar VRMA.');
       }

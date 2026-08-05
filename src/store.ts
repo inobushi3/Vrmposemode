@@ -25,6 +25,7 @@ interface EditorState {
   dirtyPose: boolean;
   setProjectName: (name: string) => void;
   setModel: (info: ModelInfo | null, fileName?: string | null) => void;
+  setModelMetaVersion: (metaVersion: '0' | '1') => void;
   setAvailableBones: (bones: string[]) => void;
   selectBone: (bone: string | null) => void;
   setSelectedTransform: (transform: SelectedTransform) => void;
@@ -36,6 +37,7 @@ interface EditorState {
   setLoop: (loop: boolean) => void;
   setInterpolation: (value: 'LINEAR' | 'STEP') => void;
   upsertKeyframe: (keyframe: Keyframe) => void;
+  importKeyframes: (keyframes: Keyframe[], mode: 'replace' | 'append') => void;
   previewKeyframeTime: (id: string, time: number) => void;
   commitKeyframeTime: (before: Keyframe[]) => void;
   removeKeyframe: (id: string) => void;
@@ -77,6 +79,10 @@ function keyframeTimesChanged(before: Keyframe[], after: Keyframe[]): boolean {
   });
 }
 
+function frameNumber(time: number, fps: number): number {
+  return Math.round(time * Math.max(1, fps));
+}
+
 export const useEditorStore = create<EditorState>((set, get) => ({
   projectName: 'Minha animação',
   modelInfo: null,
@@ -102,6 +108,9 @@ export const useEditorStore = create<EditorState>((set, get) => ({
 
   setProjectName: (projectName) => set({ projectName }),
   setModel: (modelInfo, modelFileName = null) => set({ modelInfo, modelFileName }),
+  setModelMetaVersion: (metaVersion) => set((state) => ({
+    modelInfo: state.modelInfo ? { ...state.modelInfo, metaVersion } : state.modelInfo,
+  })),
   setAvailableBones: (availableBones) => set({ availableBones }),
   selectBone: (selectedBone) => set({ selectedBone }),
   setSelectedTransform: (selectedTransform) => set({ selectedTransform }),
@@ -134,6 +143,32 @@ export const useEditorStore = create<EditorState>((set, get) => ({
     else current.push(keyframe);
     current.sort((a, b) => a.time - b.time);
     set({ keyframes: current, history: [...get().history.slice(-49), cloneFrames(get().keyframes)], future: [], dirtyPose: false });
+  },
+
+  importKeyframes: (incoming, mode) => {
+    if (!incoming.length) return;
+    const before = cloneFrames(get().keyframes);
+    const fps = get().fps;
+    const next = mode === 'replace' ? [] : cloneFrames(get().keyframes);
+    for (const frame of cloneFrames(incoming)) {
+      const occupied = next.findIndex((item) => frameNumber(item.time, fps) === frameNumber(frame.time, fps));
+      if (occupied >= 0) next[occupied] = frame;
+      else next.push(frame);
+    }
+    next.sort((a, b) => a.time - b.time);
+    const last = lastKeyframeTime(next);
+    const duration = mode === 'replace'
+      ? Math.max(0.1, Math.min(3600, last))
+      : Math.max(get().duration, last);
+    set({
+      keyframes: next,
+      duration,
+      currentTime: Math.min(duration, Math.max(0, incoming[0].time)),
+      playing: false,
+      history: [...get().history.slice(-49), before],
+      future: [],
+      dirtyPose: false,
+    });
   },
 
   previewKeyframeTime: (id, time) => {
