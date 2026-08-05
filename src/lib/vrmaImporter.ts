@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import { GLTFLoader } from 'three/addons/loaders/GLTFLoader.js';
 import { VRMAnimationLoaderPlugin, type VRMAnimation } from '@pixiv/three-vrm-animation';
 import type { Keyframe, PoseSnapshot, QuatTuple, Vec3Tuple } from '../types';
+import { useEditorStore } from '../store';
 
 interface TrackSampler {
   evaluate: (time: number) => ArrayLike<number>;
@@ -107,6 +108,8 @@ export async function importVrma(
     throw new Error('A animação VRMA não possui duração válida.');
   }
 
+  const targetMetaVersion = options.targetMetaVersion
+    ?? useEditorStore.getState().modelInfo?.metaVersion;
   const warnings: string[] = [];
   const requestedFps = Math.max(1, Math.min(120, Math.round(options.sampleFps || 30)));
   const maximumFps = Math.max(1, Math.floor((MAX_KEYFRAMES - 1) / sourceDuration));
@@ -135,7 +138,7 @@ export async function importVrma(
     const pose: PoseSnapshot = {};
     for (const [bone, sampler] of rotationSamplers) {
       pose[bone] = {
-        rotation: quaternionTuple(sampler.evaluate(time), options.targetMetaVersion),
+        rotation: quaternionTuple(sampler.evaluate(time), targetMetaVersion),
       };
     }
     if (pose.hips && options.rootMotion && hipsSampler) {
@@ -143,7 +146,7 @@ export async function importVrma(
         hipsSampler.evaluate(time),
         animation.restHipsPosition,
         rootScale,
-        options.targetMetaVersion,
+        targetMetaVersion,
       );
     }
     keyframes.push({
@@ -156,7 +159,7 @@ export async function importVrma(
 
   if (!hipsSampler) warnings.push('Este VRMA não possui deslocamento do quadril; o movimento ficará no lugar.');
   if (!options.rootMotion && hipsSampler) warnings.push('O deslocamento do quadril foi removido pela configuração de root motion.');
-  if (options.targetMetaVersion === '0') {
+  if (targetMetaVersion === '0') {
     warnings.push('Conversão de eixos VRM 0 aplicada ao root motion e às rotações normalizadas.');
   }
   const ignoredBones = animation.humanoidTracks.rotation.size - rotationSamplers.size;
