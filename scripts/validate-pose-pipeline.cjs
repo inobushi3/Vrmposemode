@@ -121,6 +121,7 @@ const types = read('src/types.ts');
 assert.ok(types.includes('export type ExpressionSnapshot'));
 assert.ok(types.includes('expressions?: ExpressionSnapshot'));
 assert.ok(types.includes('availableExpressions?: string[]'));
+assert.ok(types.includes('export interface HumanoidRigSnapshot'));
 
 const viewport = read('src/components/Viewport.tsx');
 assert.ok(viewport.includes('manager.setValue(name'));
@@ -201,6 +202,11 @@ for (const standardBone of ['下半身', '上半身', '左腕', '左ひじ', '�
 
 const vmdParser = read('src/lib/mmdVmdParser.ts');
 assert.ok(vmdParser.includes("header.startsWith('Vocaloid Motion Data')"));
+assert.ok(vmdParser.includes('boneFrames = new Map'));
+assert.ok(vmdParser.includes('maximumFrame = Math.max(maximumFrame, frame)'));
+assert.ok(vmdParser.includes('sampleVmdBoneTrack'));
+assert.ok(vmdParser.includes('cubicBezierWeight'));
+assert.ok(vmdParser.includes('MMD is left-handed'));
 assert.ok(vmdParser.includes('morphFrameCount'));
 assert.ok(vmdParser.includes("json.dataType !== 'VMDMorph'"));
 assert.ok(vmdParser.includes('expandMmdMotionSelection'));
@@ -213,6 +219,11 @@ assert.ok(mmdRetargeter.includes('new MMDAnimationHelper'));
 assert.ok(mmdRetargeter.includes('physics: false'));
 assert.ok(mmdRetargeter.includes('current.multiply(state.worldRotation.clone().invert())'));
 assert.ok(mmdRetargeter.includes('retargetMorphOnlyVmd'));
+assert.ok(mmdRetargeter.includes('retargetDirectVmd'));
+assert.ok(mmdRetargeter.includes('sampleRootControls'));
+assert.ok(mmdRetargeter.includes('solveDirectLegIk'));
+assert.ok(mmdRetargeter.includes('return retargetDirectVmd(parsed, options)'));
+assert.ok(mmdRetargeter.includes('VMD convertido diretamente pelos nomes de ossos MMD padrão'));
 assert.ok(mmdRetargeter.includes('expressions: sampleMmdExpressions'));
 assert.ok(mmdRetargeter.includes("sourceFormat: 'VPD'"));
 assert.ok(mmdRetargeter.includes('MAX_KEYFRAMES = 12000'));
@@ -223,6 +234,14 @@ assert.ok(mmdUi.includes('accept=".pmx,.pmd,.zip'));
 assert.ok(mmdUi.includes('expandMmdMotionSelection'));
 assert.ok(mmdUi.includes('VMD facial/lip'));
 assert.ok(mmdUi.includes('availableExpressions: modelInfo.availableExpressions'));
+assert.ok(mmdUi.includes('targetRig: modelInfo.humanoidRig'));
+assert.ok(mmdUi.includes("sourceModelRequired = Boolean(motionFile && /\\.vpd$/i"));
+assert.ok(mmdUi.includes('Modo direto no VRM'));
+assert.ok(mmdUi.includes('VMD → VRM direto'));
+assert.ok(mmdUi.includes('renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25))'));
+assert.ok(mmdUi.includes('controls.enableDamping = false'));
+assert.ok(mmdUi.includes("controls.addEventListener('change', requestRender)"));
+assert.ok(!mmdUi.includes('requestAnimationFrame(render);'));
 assert.ok(mmdUi.includes('Pasta completa'));
 
 const rendererMain = read(rendererPath);
@@ -232,4 +251,4 @@ assert.ok(rendererMain.includes('<MmdStudio />'));
 assert.ok(rendererMain.includes('<PersonalPoseLibrary />'));
 assert.ok(rendererMain.includes("'./mmd-motion-package.css'"));
 
-console.log('RTMW3D, VRM axes, PAP/SKLB/XAT conversion, root motion extraction, facial expressions, multi-format import and MMD validation completed.');
+console.log('RTMW3D, VRM axes, PAP/SKLB/XAT, direct VMD to VRM, economical MMD preview, facial expressions and multi-format import validation completed.');
