@@ -60,10 +60,29 @@ const requiredFiles = [
   'src/lib/motionLibrary.ts',
   'src/components/MotionLibraryStudio.tsx',
   'src/components/VrmMetaVersionProbe.tsx',
+  'src/lib/poseLibrary.ts',
+  'src/components/PersonalPoseLibrary.tsx',
+  'src/personal-pose-library.css',
 ];
 for (const relativePath of requiredFiles) {
   assert.ok(fs.existsSync(path.join(__dirname, '..', relativePath)), `${relativePath} must exist.`);
 }
+
+const constants = fs.readFileSync(path.join(__dirname, '..', 'src', 'constants.ts'), 'utf8');
+assert.ok(constants.includes("{ id: 'tpose'"), 'The safe T-pose reset must remain available.');
+for (const brokenPreset of ["id: 'relaxed'", "id: 'wave'", "id: 'hero'", "id: 'cute'", "id: 'sit'"]) {
+  assert.ok(!constants.includes(brokenPreset), `Broken hard-coded preset ${brokenPreset} must stay removed from the UI.`);
+}
+
+const poseLibrary = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'poseLibrary.ts'), 'utf8');
+assert.ok(poseLibrary.includes("DB_NAME = 'vrm-pose-mode-pose-library'"), 'Personal poses must persist locally.');
+assert.ok(poseLibrary.includes("type: 'pose'"), 'Exported pose files must have an explicit document type.');
+assert.ok(poseLibrary.includes('validatePoseSnapshot'), 'Imported pose files must be validated before use.');
+
+const personalPoseUi = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'PersonalPoseLibrary.tsx'), 'utf8');
+assert.ok(personalPoseUi.includes('Salve primeiro um keyframe'), 'The pose library must require a real captured keyframe instead of invented angles.');
+assert.ok(personalPoseUi.includes('structuredClone(selected.pose)'), 'Saved normalized poses must be applied without mutating the library record.');
+assert.ok(personalPoseUi.includes('.vrmpose.pose.json'), 'Personal poses must support a dedicated export file.');
 
 const vrmaImporter = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'vrmaImporter.ts'), 'utf8');
 assert.ok(vrmaImporter.includes('new VRMAnimationLoaderPlugin(parser)'), 'VRMA must use the official loader plugin.');
@@ -96,6 +115,8 @@ assert.ok(motionLibrary.includes('indexedDB.open(DB_NAME, DB_VERSION)'), 'The mo
 const rendererMain = fs.readFileSync(rendererPath, 'utf8');
 assert.ok(rendererMain.includes('<VrmMetaVersionProbe />'), 'VRM version detection must be mounted before the editor.');
 assert.ok(rendererMain.includes('<MotionLibraryStudio />'), 'The motion library must be mounted.');
+assert.ok(rendererMain.includes('<PersonalPoseLibrary />'), 'The personal pose library must be mounted.');
 assert.ok(rendererMain.includes("'./motion-library-formats.css'"), 'Multi-format UI styles must be loaded.');
+assert.ok(rendererMain.includes("'./personal-pose-library.css'"), 'Personal pose library styles must be loaded.');
 
-console.log('RTMW3D, retargeting, VRM axis conversion and multi-format motion import validation completed.');
+console.log('RTMW3D, retargeting, VRM axis conversion, multi-format motion import and personal pose library validation completed.');
