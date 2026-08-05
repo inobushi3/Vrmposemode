@@ -7,22 +7,22 @@ const {
 } = require('../electron/rtmw3d.cjs');
 
 function almostEqual(actual, expected, epsilon = 1e-7) {
-  assert.ok(Math.abs(actual - expected) <= epsilon, `Esperado ${expected}, recebido ${actual}`);
+  assert.ok(Math.abs(actual - expected) <= epsilon, `Expected ${expected}, received ${actual}`);
 }
 
 almostEqual(decodeDepthIndex(INPUT_HEIGHT), 0);
-assert.ok(decodeDepthIndex(0) < 0, 'O início do eixo Z deve estar atrás do centro.');
-assert.ok(decodeDepthIndex(INPUT_HEIGHT * 2) > 0, 'O fim do eixo Z deve estar à frente do centro.');
+assert.ok(decodeDepthIndex(0) < 0, 'The beginning of the Z axis must be behind the center.');
+assert.ok(decodeDepthIndex(INPUT_HEIGHT * 2) > 0, 'The end of the Z axis must be in front of the center.');
 
 const retargeterPath = path.join(__dirname, '..', 'src', 'lib', 'poseRetargeter.ts');
 const retargeter = fs.readFileSync(retargeterPath, 'utf8');
 assert.ok(
   retargeter.includes('if (!prior) return safeScore > 0.001 ? next : IDENTITY.clone();'),
-  'A primeira pose precisa aplicar rotações válidas mesmo abaixo do limite de confiança.',
+  'The first valid pose must not be discarded by the confidence threshold.',
 );
 assert.ok(
   !retargeter.includes('if (score >= threshold) return candidate.normalize();'),
-  'O gate antigo de confiança não pode descartar a primeira pose.',
+  'The obsolete first-frame confidence gate must not return.',
 );
 
 const removedPaths = [
@@ -36,10 +36,7 @@ const removedPaths = [
   'THIRD_PARTY_NOTICES.md',
 ];
 for (const relativePath of removedPaths) {
-  assert.ok(
-    !fs.existsSync(path.join(__dirname, '..', relativePath)),
-    `${relativePath} não pode voltar ao projeto.`,
-  );
+  assert.ok(!fs.existsSync(path.join(__dirname, '..', relativePath)), `${relativePath} must stay removed.`);
 }
 
 const mainPath = path.join(__dirname, '..', 'electron', 'main.cjs');
@@ -48,40 +45,43 @@ const rendererPath = path.join(__dirname, '..', 'src', 'main.tsx');
 const combined = [mainPath, preloadPath, rendererPath]
   .map((filePath) => fs.readFileSync(filePath, 'utf8'))
   .join('\n');
-assert.ok(!combined.includes('text-motion'), 'Canais IPC de geração por texto não podem permanecer.');
-assert.ok(!combined.includes('TextMotion'), 'Componentes e serviços de geração por texto não podem permanecer.');
+assert.ok(!combined.includes('text-motion'), 'Text-motion IPC channels must stay removed.');
+assert.ok(!combined.includes('TextMotion'), 'Text-motion components and services must stay removed.');
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
-assert.equal(
-  packageJson.dependencies['@pixiv/three-vrm-animation'],
-  '3.5.5',
-  'A importação VRMA deve usar o carregador oficial alinhado à versão do three-vrm.',
-);
+assert.equal(packageJson.dependencies['@pixiv/three-vrm-animation'], '3.5.5');
+assert.equal(packageJson.dependencies.fflate, '0.8.2', 'PMP inspection requires deterministic ZIP support.');
 
-const vrmaImporterPath = path.join(__dirname, '..', 'src', 'lib', 'vrmaImporter.ts');
-const motionLibraryPath = path.join(__dirname, '..', 'src', 'lib', 'motionLibrary.ts');
-const motionStudioPath = path.join(__dirname, '..', 'src', 'components', 'MotionLibraryStudio.tsx');
-for (const filePath of [vrmaImporterPath, motionLibraryPath, motionStudioPath]) {
-  assert.ok(fs.existsSync(filePath), `${path.basename(filePath)} precisa existir.`);
+const requiredFiles = [
+  'src/lib/vrmaImporter.ts',
+  'src/lib/motionImporter.ts',
+  'src/lib/motionFormats.ts',
+  'src/lib/motionLibrary.ts',
+  'src/components/MotionLibraryStudio.tsx',
+];
+for (const relativePath of requiredFiles) {
+  assert.ok(fs.existsSync(path.join(__dirname, '..', relativePath)), `${relativePath} must exist.`);
 }
 
-const vrmaImporter = fs.readFileSync(vrmaImporterPath, 'utf8');
-assert.ok(
-  vrmaImporter.includes('new VRMAnimationLoaderPlugin(parser)'),
-  'VRMA precisa ser lido pelo plugin oficial VRMC_vrm_animation.',
-);
-assert.ok(
-  vrmaImporter.includes('Number(value[0]) - rest.x'),
-  'A translação absoluta do quadril precisa virar deslocamento relativo à T-pose.',
-);
-assert.ok(
-  vrmaImporter.includes('MAX_KEYFRAMES = 12000'),
-  'A importação deve impedir timelines gigantes sem limite.',
-);
+const vrmaImporter = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'vrmaImporter.ts'), 'utf8');
+assert.ok(vrmaImporter.includes('new VRMAnimationLoaderPlugin(parser)'), 'VRMA must use the official loader plugin.');
+assert.ok(vrmaImporter.includes('Number(value[0]) - rest.x'), 'VRMA hips translation must become T-pose-relative motion.');
 
-const motionLibrary = fs.readFileSync(motionLibraryPath, 'utf8');
-assert.ok(motionLibrary.includes("indexedDB.open(DB_NAME, DB_VERSION)"), 'A biblioteca precisa persistir localmente em IndexedDB.');
+const motionImporter = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'motionImporter.ts'), 'utf8');
+assert.ok(motionImporter.includes('new BVHLoader().parse'), 'BVH support must remain enabled.');
+assert.ok(motionImporter.includes('new FBXLoader().parse'), 'FBX support must remain enabled.');
+assert.ok(motionImporter.includes('loader.parseAsync'), 'GLB/glTF support must remain enabled.');
+assert.ok(motionImporter.includes("format === 'pmp'"), 'PMP packages must be recognized.');
+assert.ok(motionImporter.includes('proprietary Havok'), 'PAP must be blocked with an explicit proprietary-format diagnostic.');
+assert.ok(motionImporter.includes('currentWorld.multiply(state.restWorldRotation.clone().invert())'), 'Retargeting must use animation deltas from the source rest pose.');
+assert.ok(motionImporter.includes('MAX_KEYFRAMES = 12000'), 'Imported timelines must have a hard size limit.');
+
+const motionLibrary = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'motionLibrary.ts'), 'utf8');
+assert.ok(motionLibrary.includes('DB_VERSION = 2'), 'The motion library schema must include the source format.');
+assert.ok(motionLibrary.includes('indexedDB.open(DB_NAME, DB_VERSION)'), 'The motion library must persist locally.');
+
 const rendererMain = fs.readFileSync(rendererPath, 'utf8');
-assert.ok(rendererMain.includes('<MotionLibraryStudio />'), 'A biblioteca de movimentos precisa estar montada no aplicativo.');
+assert.ok(rendererMain.includes('<MotionLibraryStudio />'), 'The motion library must be mounted.');
+assert.ok(rendererMain.includes("'./motion-library-formats.css'"), 'Multi-format UI styles must be loaded.');
 
-console.log('RTMW3D, retargeting e biblioteca VRMA oficial: validação concluída.');
+console.log('RTMW3D, retargeting and multi-format motion import validation completed.');
