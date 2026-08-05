@@ -10,11 +10,20 @@ import {
   type LoadedMmdModel,
 } from './mmdModelLoader';
 import { findMmdRootMotionNode, mapMmdHumanoidBones } from './mmdHumanoid';
+import {
+  buildMmdExpressionMapping,
+  parseVmd,
+  sampleMmdExpressions,
+  type MmdExpressionMapping,
+  type ParsedVmd,
+} from './mmdVmdParser';
 
 export interface MmdMotionRetargetOptions {
   sourceModelFiles: File[];
   motionFile: File;
+  motionPackageFiles?: File[];
   availableBones: string[];
+  availableExpressions: string[];
   sampleFps: number;
   rootMotion: boolean;
   rootScale: number;
@@ -29,6 +38,8 @@ export interface RetargetedMmdMotion {
   duration: number;
   effectiveFps: number;
   mappedBones: number;
+  mappedExpressions: number;
+  sourceMorphs: number;
   keyframes: Keyframe[];
   hasRootMotion: boolean;
   warnings: string[];
@@ -42,7 +53,8 @@ interface RestBone {
 const MAX_KEYFRAMES = 12000;
 
 function cleanName(fileName: string): string {
-  return fileName.replace(/\.(vmd|vpd)$/i, '').trim() || 'Movimento MMD';
+  const base = fileName.replace(/\\/g, '/').split('/').pop() ?? fileName;
+  return base.replace(/\.(vmd|vpd)$/i, '').trim() || 'Movimento MMD';
 }
 
 function tupleQuaternion(value: THREE.Quaternion, vrm0: boolean): QuatTuple {
@@ -203,12 +215,85 @@ function warningsFor(loaded: LoadedMmdModel, mappedBones: number): string[] {
   return warnings;
 }
 
+function sampling(duration: number, requested: number): { effectiveFps: number; frameCount: number } {
+  const requestedFps = Math.max(1, Math.min(60, Math.round(requested || 30)));
+  const effectiveFps = Math.min(requestedFps, Math.max(1, Math.floor((MAX_KEYFRAMES - 1) / Math.max(duration, 1e-6))));
+  return {
+    effectiveFps,
+    frameCount: Math.max(1, Math.ceil(duration * effectiveFps)),
+  };
+}
+
+async function expressionMapping(
+  parsed: ParsedVmd,
+  options: MmdMotionRetargetOptions,
+): Promise<MmdExpressionMapping> {
+  const packageFiles = options.motionPackageFiles ?? [options.motionFile];
+  return buildMmdExpressionMapping(
+    parsed,
+    options.availableExpressions,
+    packageFiles.filter((file) => /\.json$/i.test(file.name)),
+  );
+}
+
+function expressionWarnings(parsed: ParsedVmd, mapping: MmdExpressionMapping): string[] {
+  const warnings: string[] = [];
+  if (parsed.morphFrameCount > 0 && mapping.sourceToTarget.size === 0) {
+    warnings.push('O VMD contém morphs faciais, mas nenhum deles corresponde às expressões disponíveis no VRM aberto.');
+  } else if (mapping.ignoredSources.length > 0) {
+    warnings.push(`${mapping.ignoredSources.length} morph(s) MMD não encontraram expressão equivalente no VRM e foram ignorados.`);
+  }
+  return warnings;
+}
+
+async function retargetMorphOnlyVmd(
+  parsed: ParsedVmd,
+  options: MmdMotionRetargetOptions,
+): Promise<RetargetedMmdMotion> {
+  if (parsed.morphFrameCount <= 0 || parsed.duration <= 0) {
+    throw new Error('O VMD não contém movimento corporal nem morphs faciais animados.');
+  }
+  const mapping = await expressionMapping(parsed, options);
+  if (!mapping.sourceToTarget.size) {
+    throw new Error('Nenhum morph do VMD pôde ser associado às expressões do VRM aberto.');
+  }
+  const { effectiveFps, frameCount } = sampling(parsed.duration, options.sampleFps);
+  const keyframes: Keyframe[] = [];
+  for (let frame = 0; frame <= frameCount; frame += 1) {
+    const time = frame === frameCount ? parsed.duration : frame / effectiveFps;
+    keyframes.push({
+      id: crypto.randomUUID(),
+      time,
+      pose: {},
+      expressions: sampleMmdExpressions(parsed, mapping, time),
+      easing: 'linear',
+    });
+  }
+  return {
+    name: cleanName(options.motionFile.name),
+    sourceModel: 'VMD facial/lip — modelo MMD não necessário',
+    sourceFormat: 'VMD',
+    duration: parsed.duration,
+    effectiveFps,
+    mappedBones: 0,
+    mappedExpressions: new Set(mapping.sourceToTarget.values()).size,
+    sourceMorphs: parsed.morphFrames.size,
+    keyframes,
+    hasRootMotion: false,
+    warnings: [
+      ...expressionWarnings(parsed, mapping),
+      'Este arquivo possui somente morphs de rosto/lábios. Ele foi convertido diretamente para canais de expressão VRMA.',
+    ],
+  };
+}
+
 async function retargetVmd(
   loaded: LoadedMmdModel,
   options: MmdMotionRetargetOptions,
+  parsed: ParsedVmd,
 ): Promise<RetargetedMmdMotion> {
   const clip = await loadVmdOnMmdModel(loaded.mesh, options.motionFile);
-  const duration = Number(clip.duration);
+  const duration = Math.max(Number(clip.duration) || 0, parsed.duration);
   if (!Number.isFinite(duration) || duration <= 0) throw new Error('O VMD não contém uma duração de animação válida.');
 
   const source = prepareSource(
@@ -217,13 +302,12 @@ async function retargetVmd(
     options.targetHeight,
     options.rootScale,
   );
-  const requestedFps = Math.max(1, Math.min(60, Math.round(options.sampleFps || 30)));
-  const effectiveFps = Math.min(requestedFps, Math.max(1, Math.floor((MAX_KEYFRAMES - 1) / duration)));
+  const { effectiveFps, frameCount } = sampling(duration, options.sampleFps);
+  const mapping = await expressionMapping(parsed, options);
   const helper = new MMDAnimationHelper({ sync: false, pmxAnimation: true });
   helper.enabled.physics = false;
   helper.add(loaded.mesh, { animation: clip, physics: false, animationWarmup: false });
 
-  const frameCount = Math.max(1, Math.ceil(duration * effectiveFps));
   const keyframes: Keyframe[] = [];
   const vrm0 = options.targetMetaVersion === '0';
   let previousSampleTime = 0;
@@ -249,6 +333,9 @@ async function retargetVmd(
           options.rootMotion,
           vrm0,
         ),
+        ...(mapping.sourceToTarget.size
+          ? { expressions: sampleMmdExpressions(parsed, mapping, timelineTime) }
+          : {}),
         easing: 'linear',
       });
     }
@@ -260,8 +347,13 @@ async function retargetVmd(
     const position = frame.pose.hips?.position;
     return Boolean(position && Math.hypot(position[0], position[1], position[2]) > 0.001);
   });
-  const warnings = warningsFor(loaded, source.mapped.size);
-  if (effectiveFps < requestedFps) warnings.push(`Amostragem reduzida para ${effectiveFps} FPS para limitar a timeline.`);
+  const warnings = [
+    ...warningsFor(loaded, source.mapped.size),
+    ...expressionWarnings(parsed, mapping),
+  ];
+  if (effectiveFps < Math.max(1, Math.min(60, Math.round(options.sampleFps || 30)))) {
+    warnings.push(`Amostragem reduzida para ${effectiveFps} FPS para limitar a timeline.`);
+  }
   warnings.push('IK e grants do modelo MMD de origem foram avaliados antes do retargeting. Física de cabelo e roupa não é exportada para VRMA.');
 
   return {
@@ -271,6 +363,8 @@ async function retargetVmd(
     duration,
     effectiveFps,
     mappedBones: source.mapped.size,
+    mappedExpressions: new Set(mapping.sourceToTarget.values()).size,
+    sourceMorphs: parsed.morphFrames.size,
     keyframes,
     hasRootMotion,
     warnings,
@@ -315,6 +409,8 @@ async function retargetVpd(
     duration,
     effectiveFps: Math.round(1 / duration),
     mappedBones: source.mapped.size,
+    mappedExpressions: 0,
+    sourceMorphs: 0,
     keyframes,
     hasRootMotion: Boolean(pose.hips?.position),
     warnings: [
@@ -328,11 +424,32 @@ export async function retargetMmdMotion(options: MmdMotionRetargetOptions): Prom
   if (!/\.(vmd|vpd)$/i.test(options.motionFile.name)) {
     throw new Error('Selecione um movimento .vmd ou uma pose .vpd.');
   }
+
+  if (/\.vmd$/i.test(options.motionFile.name)) {
+    const parsed = await parseVmd(options.motionFile);
+    if (parsed.boneFrameCount === 0 && parsed.morphFrameCount > 0) {
+      return retargetMorphOnlyVmd(parsed, options);
+    }
+    if (parsed.boneFrameCount === 0 && parsed.morphFrameCount === 0) {
+      throw new Error('Esse VMD não possui frames de ossos nem morphs faciais.');
+    }
+    if (!options.sourceModelFiles.length) {
+      throw new Error('Este VMD contém movimento corporal. Selecione o PMX/PMD para resolver o esqueleto, IK e grants.');
+    }
+    const loaded = await loadMmdModel(options.sourceModelFiles);
+    try {
+      return await retargetVmd(loaded, options, parsed);
+    } finally {
+      loaded.release();
+    }
+  }
+
+  if (!options.sourceModelFiles.length) {
+    throw new Error('Uma pose VPD precisa do PMX/PMD de origem para resolver os nomes e o IK.');
+  }
   const loaded = await loadMmdModel(options.sourceModelFiles);
   try {
-    return /\.vpd$/i.test(options.motionFile.name)
-      ? await retargetVpd(loaded, options)
-      : await retargetVmd(loaded, options);
+    return await retargetVpd(loaded, options);
   } finally {
     loaded.release();
   }
