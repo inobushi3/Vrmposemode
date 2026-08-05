@@ -72,15 +72,23 @@ assert.ok(semantic.includes('rightUpperArm: { r: [0, 0, -68] }'), 'O braço dire
 assert.ok(semantic.includes('leftUpperArm: { r: [8, 6, 52] }'), 'A pose heroica precisa reutilizar a orientação validada no editor.');
 assert.ok(semantic.includes('leftUpperArm: { r: [0, leftArmY, 68] }'), 'A caminhada deve oscilar o braço em Y sem inverter sua queda em Z.');
 
-const textCompilerPath = path.join(__dirname, '..', 'src', 'lib', 'textMotion.ts');
-const textCompiler = fs.readFileSync(textCompilerPath, 'utf8');
+const compilerPath = path.join(__dirname, '..', 'src', 'lib', 'textMotionCompiler.ts');
+const compiler = fs.readFileSync(compilerPath, 'utf8');
 assert.ok(
-  textCompiler.includes('mergeSanitizedFrames(customFrames, semanticFrames)'),
+  compiler.includes('mergeFrames(custom, deterministic)'),
   'Ações semânticas determinísticas precisam vencer rotações livres do LLM.',
 );
 assert.ok(
-  textCompiler.includes('previousTransform?.p'),
+  compiler.includes('previous?.p'),
   'A posição alcançada pela caminhada precisa continuar aplicada durante a pose final.',
+);
+assert.ok(
+  compiler.includes('REQUIRED_TEXT_MOTION_BONES.filter'),
+  'O gerador precisa recusar um VRM sem o humanoide obrigatório.',
+);
+assert.ok(
+  compiler.includes('normalizedRelaxedPose()[bone]'),
+  'Pose base e movimentos precisam compartilhar a mesma convenção normalizada.',
 );
 
 const rendererStudioPath = path.join(__dirname, '..', 'src', 'components', 'TextMotionStudio.tsx');
