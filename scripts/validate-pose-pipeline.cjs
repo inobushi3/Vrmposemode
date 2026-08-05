@@ -61,12 +61,16 @@ assert.ok(prompt.includes('forward = +Z'), 'O contrato precisa fixar a direção
 assert.ok(prompt.includes('normalizedHumanBones'), 'O contrato precisa usar o humanoide normalizado do VRM.');
 assert.ok(!prompt.includes('leftLowerLeg, rightLowerLeg'), 'O prompt deve anunciar somente ossos disponíveis quando recebidos.');
 
-const proceduralPath = path.join(__dirname, '..', 'src', 'lib', 'proceduralMotion.ts');
-const procedural = fs.readFileSync(proceduralPath, 'utf8');
-assert.ok(procedural.includes("if (direction === 'backward') return [0, 0, -1];"));
-assert.ok(procedural.includes('return [0, 0, 1];'), 'Caminhar para frente precisa aumentar Z.');
-assert.ok(procedural.includes("if (action.type === 'heroPose')"), 'A pose heroica precisa ter compilador determinístico.');
-assert.ok(procedural.includes('steps: clamp'), 'A quantidade de passos precisa ser preservada e limitada.');
+const semanticPath = path.join(__dirname, '..', 'src', 'lib', 'vrmSemanticMotion.ts');
+const semantic = fs.readFileSync(semanticPath, 'utf8');
+assert.ok(semantic.includes("? [0, 0, -1]"), 'Backward precisa usar -Z local.');
+assert.ok(semantic.includes(': [0, 0, 1];'), 'Forward precisa usar +Z local.');
+assert.ok(semantic.includes("if (action.type === 'heroPose')"), 'A pose heroica precisa ter compilador determinístico.');
+assert.ok(semantic.includes('steps: clamp'), 'A quantidade de passos precisa ser preservada e limitada.');
+assert.ok(semantic.includes('leftUpperArm: { r: [0, 0, 68] }'), 'O braço esquerdo relaxado precisa usar o eixo já validado pelo viewport.');
+assert.ok(semantic.includes('rightUpperArm: { r: [0, 0, -68] }'), 'O braço direito relaxado precisa usar o eixo já validado pelo viewport.');
+assert.ok(semantic.includes('leftUpperArm: { r: [8, 6, 52] }'), 'A pose heroica precisa reutilizar a orientação validada no editor.');
+assert.ok(semantic.includes('leftUpperArm: { r: [0, leftArmY, 68] }'), 'A caminhada deve oscilar o braço em Y sem inverter sua queda em Z.');
 
 const textCompilerPath = path.join(__dirname, '..', 'src', 'lib', 'textMotion.ts');
 const textCompiler = fs.readFileSync(textCompilerPath, 'utf8');
@@ -74,10 +78,14 @@ assert.ok(
   textCompiler.includes('mergeSanitizedFrames(customFrames, semanticFrames)'),
   'Ações semânticas determinísticas precisam vencer rotações livres do LLM.',
 );
+assert.ok(
+  textCompiler.includes('previousTransform?.p'),
+  'A posição alcançada pela caminhada precisa continuar aplicada durante a pose final.',
+);
 
 const rendererStudioPath = path.join(__dirname, '..', 'src', 'components', 'TextMotionStudio.tsx');
 const rendererStudio = fs.readFileSync(rendererStudioPath, 'utf8');
 assert.ok(!rendererStudio.includes('localStorage'), 'Chaves e configurações do gerador não podem usar localStorage.');
 assert.ok(!rendererStudio.includes('Authorization'), 'O renderer não pode montar cabeçalhos de autenticação.');
 
-console.log('RTMW3D, retargeting e motor semântico de movimento: validação concluída.');
+console.log('RTMW3D, retargeting e motor semântico VRM: validação concluída.');
