@@ -8,7 +8,7 @@ on:
 jobs:
   windows-build:
     runs-on: windows-latest
-    timeout-minutes: 20
+    timeout-minutes: 25
     steps:
       - name: Checkout
         uses: actions/checkout@v4
@@ -26,3 +26,19 @@ jobs:
 
       - name: Typecheck and build
         run: npm run build
+
+      - name: Smoke test official XAT runtime
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP 'XAT.zip'
+          $runtime = Join-Path $env:RUNNER_TEMP 'XAT-runtime'
+          $container = Join-Path $env:RUNNER_TEMP 'xat-empty-container.hkx'
+          Invoke-WebRequest -Uri 'https://github.com/Etheirys/XAT/releases/latest/download/XAT.zip' -OutFile $archive
+          Expand-Archive -Path $archive -DestinationPath $runtime -Force
+          $tool = Get-ChildItem -Path $runtime -Filter 'XATHavokInterop.exe' -Recurse | Select-Object -First 1
+          if (-not $tool) { throw 'XATHavokInterop.exe was not found in the official XAT release.' }
+          & $tool.FullName createContainer $container
+          if ($LASTEXITCODE -ne 0) { throw "XATHavokInterop createContainer failed with exit code $LASTEXITCODE." }
+          $output = Get-Item $container -ErrorAction Stop
+          if ($output.Length -le 0) { throw 'XAT produced an empty Havok container.' }
+          Write-Host "XAT runtime loaded and produced $($output.Length) bytes."
