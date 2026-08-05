@@ -99,6 +99,25 @@
   background: rgba(139,120,255,.08);
 }
 .motion-pap-files button:disabled { opacity: .45; cursor: not-allowed; }
+.motion-pap-waiting {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin-top: 8px;
+  padding: 8px 9px;
+  border: 1px solid rgba(255,184,90,.17);
+  border-radius: 8px;
+  color: #d7a65f;
+  background: rgba(221,145,58,.055);
+  font-size: 7px;
+  line-height: 1.45;
+}
+.motion-pap-waiting.ready {
+  color: #8eddb2;
+  border-color: rgba(74,207,143,.18);
+  background: rgba(64,190,126,.055);
+}
+.motion-pap-waiting svg { flex: 0 0 auto; }
 .motion-pap-status {
   display: flex;
   flex-direction: column;
