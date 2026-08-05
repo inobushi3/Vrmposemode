@@ -40,6 +40,10 @@ const requested = inferRequestedActions('Dê 2 passos para frente e depois faça
 assert.equal(requested.length, 2, 'As duas ações explícitas precisam ser reconhecidas.');
 assert.deepEqual(requested[0], { type: 'walk', steps: 2, direction: 'forward' });
 assert.deepEqual(requested[1], { type: 'heroPose' });
+const typoRequested = inferRequestedActions('dar 2 passo pra frente e fazer pode de heroi');
+assert.deepEqual(typoRequested.map((action) => action.type), ['walk', 'heroPose']);
+assert.equal(typoRequested[0].steps, 2);
+assert.equal(typoRequested[0].direction, 'forward');
 const covered = ensureActionCoverage({ duration: 4, actions: [] }, 'Dê 2 passos para frente e depois faça uma pose heroica.');
 assert.deepEqual(covered.actions.map((action) => action.type), ['walk', 'heroPose']);
 
@@ -60,9 +64,16 @@ assert.ok(!prompt.includes('leftLowerLeg, rightLowerLeg'), 'O prompt deve anunci
 const proceduralPath = path.join(__dirname, '..', 'src', 'lib', 'proceduralMotion.ts');
 const procedural = fs.readFileSync(proceduralPath, 'utf8');
 assert.ok(procedural.includes("if (direction === 'backward') return [0, 0, -1];"));
-assert.ok(procedural.includes("return [0, 0, 1];"), 'Caminhar para frente precisa aumentar Z.');
+assert.ok(procedural.includes('return [0, 0, 1];'), 'Caminhar para frente precisa aumentar Z.');
 assert.ok(procedural.includes("if (action.type === 'heroPose')"), 'A pose heroica precisa ter compilador determinístico.');
 assert.ok(procedural.includes('steps: clamp'), 'A quantidade de passos precisa ser preservada e limitada.');
+
+const textCompilerPath = path.join(__dirname, '..', 'src', 'lib', 'textMotion.ts');
+const textCompiler = fs.readFileSync(textCompilerPath, 'utf8');
+assert.ok(
+  textCompiler.includes('mergeSanitizedFrames(customFrames, semanticFrames)'),
+  'Ações semânticas determinísticas precisam vencer rotações livres do LLM.',
+);
 
 const rendererStudioPath = path.join(__dirname, '..', 'src', 'components', 'TextMotionStudio.tsx');
 const rendererStudio = fs.readFileSync(rendererStudioPath, 'utf8');
