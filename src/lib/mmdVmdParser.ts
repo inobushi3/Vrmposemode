@@ -1,4 +1,15 @@
+import * as THREE from 'three';
 import { unzipSync } from 'fflate';
+import type { QuatTuple, Vec3Tuple } from '../types';
+
+export interface VmdBoneFrame {
+  name: string;
+  frame: number;
+  time: number;
+  position: Vec3Tuple;
+  rotation: QuatTuple;
+  interpolation: number[];
+}
 
 export interface VmdMorphFrame {
   name: string;
@@ -13,7 +24,14 @@ export interface ParsedVmd {
   morphFrameCount: number;
   cameraFrameCount: number;
   duration: number;
+  maximumFrame: number;
+  boneFrames: Map<string, VmdBoneFrame[]>;
   morphFrames: Map<string, VmdMorphFrame[]>;
+}
+
+export interface SampledVmdBone {
+  position: Vec3Tuple;
+  rotation: QuatTuple;
 }
 
 export interface MmdMotionSelection {
@@ -36,6 +54,7 @@ interface VmdMorphMapJson {
 }
 
 const VMD_FPS = 30;
+const MAX_VMD_FRAMES = 5_000_000;
 const PRESET_NAMES = new Set([
   'happy', 'angry', 'sad', 'relaxed', 'surprised',
   'aa', 'ih', 'ou', 'ee', 'oh',
@@ -107,6 +126,13 @@ function requireBytes(offset: number, length: number, total: number, label: stri
   }
 }
 
+function safeFrameCount(count: number, label: string): number {
+  if (!Number.isInteger(count) || count < 0 || count > MAX_VMD_FRAMES) {
+    throw new Error(`VMD inválido: ${label} contém ${count} registros.`);
+  }
+  return count;
+}
+
 export async function parseVmd(file: File): Promise<ParsedVmd> {
   const data = new Uint8Array(await file.arrayBuffer());
   const view = new DataView(data.buffer, data.byteOffset, data.byteLength);
@@ -117,22 +143,56 @@ export async function parseVmd(file: File): Promise<ParsedVmd> {
   }
   const modelName = decodeShiftJis(data.subarray(30, 50));
   let offset = 50;
+  let maximumFrame = 0;
 
   const readCount = (label: string): number => {
     requireBytes(offset, 4, data.byteLength, label);
-    const count = view.getUint32(offset, true);
+    const count = safeFrameCount(view.getUint32(offset, true), label);
     offset += 4;
     return count;
   };
 
   const boneFrameCount = readCount('quantidade de frames de ossos');
-  const boneBytes = boneFrameCount * 111;
-  requireBytes(offset, boneBytes, data.byteLength, 'frames de ossos');
-  offset += boneBytes;
+  const boneFrames = new Map<string, VmdBoneFrame[]>();
+  for (let index = 0; index < boneFrameCount; index += 1) {
+    requireBytes(offset, 111, data.byteLength, `frame de osso ${index + 1}`);
+    const name = decodeShiftJis(data.subarray(offset, offset + 15));
+    const frame = view.getUint32(offset + 15, true);
+    const rawPosition: Vec3Tuple = [
+      view.getFloat32(offset + 19, true),
+      view.getFloat32(offset + 23, true),
+      view.getFloat32(offset + 27, true),
+    ];
+    const rawRotation: QuatTuple = [
+      view.getFloat32(offset + 31, true),
+      view.getFloat32(offset + 35, true),
+      view.getFloat32(offset + 39, true),
+      view.getFloat32(offset + 43, true),
+    ];
+    const interpolation = Array.from(data.subarray(offset + 47, offset + 111));
+    offset += 111;
+    maximumFrame = Math.max(maximumFrame, frame);
+    if (!name) continue;
+
+    // MMD is left-handed. This matches mmd-parser/Three.js leftToRightVmd.
+    const position: Vec3Tuple = [rawPosition[0], rawPosition[1], -rawPosition[2]];
+    const quaternion = new THREE.Quaternion(-rawRotation[0], -rawRotation[1], rawRotation[2], rawRotation[3]).normalize();
+    const entry: VmdBoneFrame = {
+      name,
+      frame,
+      time: frame / VMD_FPS,
+      position,
+      rotation: quaternion.toArray() as QuatTuple,
+      interpolation,
+    };
+    const list = boneFrames.get(name) ?? [];
+    list.push(entry);
+    boneFrames.set(name, list);
+  }
+  for (const list of boneFrames.values()) list.sort((a, b) => a.frame - b.frame);
 
   const morphFrameCount = readCount('quantidade de frames de morph');
   const morphFrames = new Map<string, VmdMorphFrame[]>();
-  let maximumFrame = 0;
   for (let index = 0; index < morphFrameCount; index += 1) {
     requireBytes(offset, 23, data.byteLength, `morph ${index + 1}`);
     const name = decodeShiftJis(data.subarray(offset, offset + 15));
@@ -159,8 +219,73 @@ export async function parseVmd(file: File): Promise<ParsedVmd> {
     morphFrameCount,
     cameraFrameCount,
     duration: maximumFrame / VMD_FPS,
+    maximumFrame,
+    boneFrames,
     morphFrames,
   };
+}
+
+function cubicCoordinate(t: number, p1: number, p2: number): number {
+  const inv = 1 - t;
+  return 3 * inv * inv * t * p1 + 3 * inv * t * t * p2 + t * t * t;
+}
+
+function cubicBezierWeight(alpha: number, interpolation: number[], channel: number): number {
+  const x1 = Math.max(0, Math.min(1, (interpolation[channel] ?? 20) / 127));
+  const x2 = Math.max(0, Math.min(1, (interpolation[channel + 8] ?? 107) / 127));
+  const y1 = Math.max(0, Math.min(1, (interpolation[channel + 4] ?? 20) / 127));
+  const y2 = Math.max(0, Math.min(1, (interpolation[channel + 12] ?? 107) / 127));
+  const target = Math.max(0, Math.min(1, alpha));
+  let low = 0;
+  let high = 1;
+  for (let iteration = 0; iteration < 15; iteration += 1) {
+    const middle = (low + high) * 0.5;
+    if (cubicCoordinate(middle, x1, x2) < target) low = middle;
+    else high = middle;
+  }
+  return cubicCoordinate((low + high) * 0.5, y1, y2);
+}
+
+function framePair(frames: VmdBoneFrame[], time: number): [VmdBoneFrame | null, VmdBoneFrame | null] {
+  if (!frames.length) return [null, null];
+  if (time <= frames[0].time) return [null, frames[0]];
+  const last = frames[frames.length - 1];
+  if (time >= last.time) return [last, null];
+  let low = 0;
+  let high = frames.length - 1;
+  while (low + 1 < high) {
+    const middle = Math.floor((low + high) / 2);
+    if (frames[middle].time <= time) low = middle;
+    else high = middle;
+  }
+  return [frames[low], frames[high]];
+}
+
+export function sampleVmdBoneTrack(frames: VmdBoneFrame[], time: number): SampledVmdBone {
+  const [left, right] = framePair(frames, time);
+  if (!left && !right) return { position: [0, 0, 0], rotation: [0, 0, 0, 1] };
+  if (!left && right) {
+    if (right.frame > 0) return { position: [0, 0, 0], rotation: [0, 0, 0, 1] };
+    return { position: [...right.position] as Vec3Tuple, rotation: [...right.rotation] as QuatTuple };
+  }
+  if (left && !right) return { position: [...left.position] as Vec3Tuple, rotation: [...left.rotation] as QuatTuple };
+
+  const a = left!;
+  const b = right!;
+  const span = Math.max(1e-6, b.time - a.time);
+  const linearAlpha = Math.max(0, Math.min(1, (time - a.time) / span));
+  // Three.js MMD interpolation intentionally holds the previous value for adjacent 30 FPS frames.
+  const adjacent = span < (1 / VMD_FPS) * 1.5;
+  const position: Vec3Tuple = [0, 0, 0];
+  for (let axis = 0; axis < 3; axis += 1) {
+    const weight = adjacent ? 0 : cubicBezierWeight(linearAlpha, b.interpolation, axis);
+    position[axis] = a.position[axis] + (b.position[axis] - a.position[axis]) * weight;
+  }
+  const rotationWeight = adjacent ? 0 : cubicBezierWeight(linearAlpha, b.interpolation, 3);
+  const qa = new THREE.Quaternion().fromArray(a.rotation);
+  const qb = new THREE.Quaternion().fromArray(b.rotation);
+  qa.slerp(qb, rotationWeight).normalize();
+  return { position, rotation: qa.toArray() as QuatTuple };
 }
 
 function normalizeName(value: string): string {
