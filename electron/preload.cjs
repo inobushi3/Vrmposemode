@@ -14,4 +14,14 @@ contextBridge.exposeInMainWorld('desktop', {
       return () => ipcRenderer.removeListener('rtmw3d:progress', listener);
     },
   },
+  pap: {
+    status: () => ipcRenderer.invoke('pap:status'),
+    prepare: () => ipcRenderer.invoke('pap:prepare'),
+    convert: (request) => ipcRenderer.invoke('pap:convert', request),
+    onProgress: (callback) => {
+      const listener = (_event, payload) => callback(payload);
+      ipcRenderer.on('pap:progress', listener);
+      return () => ipcRenderer.removeListener('pap:progress', listener);
+    },
+  },
 });
