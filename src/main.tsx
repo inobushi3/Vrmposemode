@@ -8,6 +8,7 @@ import ReferencePoseStudio from './components/ReferencePoseStudio';
 import Rtmw3dStudio from './components/Rtmw3dStudio';
 import Rtmw3dDepthControl from './components/Rtmw3dDepthControl';
 import MotionLibraryStudio from './components/MotionLibraryStudio';
+import MmdStudio from './components/MmdStudio';
 import VrmMetaVersionProbe from './components/VrmMetaVersionProbe';
 import PersonalPoseLibrary from './components/PersonalPoseLibrary';
 import './styles.css';
@@ -19,6 +20,7 @@ import './rtmw3d-studio.css';
 import './rtmw3d-depth-control.css';
 import './motion-library.css';
 import './motion-library-formats.css';
+import './mmd-studio.css';
 import './personal-pose-library.css';
 
 createRoot(document.getElementById('root')!).render(
@@ -31,6 +33,7 @@ createRoot(document.getElementById('root')!).render(
     <Rtmw3dStudio />
     <Rtmw3dDepthControl />
     <MotionLibraryStudio />
+    <MmdStudio />
     <PersonalPoseLibrary />
   </StrictMode>,
 );
