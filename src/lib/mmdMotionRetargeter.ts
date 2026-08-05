@@ -2,20 +2,33 @@ import * as THREE from 'three';
 import { VRMHumanBoneParentMap } from '@pixiv/three-vrm';
 import { MMDAnimationHelper } from 'three-mmd-runtime/examples/jsm/animation/MMDAnimationHelper.js';
 import type { HumanBoneName } from '../constants';
-import type { Keyframe, PoseSnapshot, QuatTuple, Vec3Tuple } from '../types';
+import type {
+  HumanoidRigSnapshot,
+  Keyframe,
+  PoseSnapshot,
+  QuatTuple,
+  Vec3Tuple,
+} from '../types';
 import {
   loadMmdModel,
   loadVmdOnMmdModel,
   loadVpdFile,
   type LoadedMmdModel,
 } from './mmdModelLoader';
-import { findMmdRootMotionNode, mapMmdHumanoidBones } from './mmdHumanoid';
+import {
+  findMmdRootMotionNode,
+  guessMmdHumanoidBone,
+  isMmdIkBoneName,
+  mapMmdHumanoidBones,
+} from './mmdHumanoid';
 import {
   buildMmdExpressionMapping,
   parseVmd,
   sampleMmdExpressions,
+  sampleVmdBoneTrack,
   type MmdExpressionMapping,
   type ParsedVmd,
+  type VmdBoneFrame,
 } from './mmdVmdParser';
 
 export interface MmdMotionRetargetOptions {
@@ -29,6 +42,7 @@ export interface MmdMotionRetargetOptions {
   rootScale: number;
   targetHeight: number;
   targetMetaVersion?: '0' | '1';
+  targetRig?: HumanoidRigSnapshot;
 }
 
 export interface RetargetedMmdMotion {
@@ -50,7 +64,14 @@ interface RestBone {
   worldRotation: THREE.Quaternion;
 }
 
+interface DirectTrack {
+  sourceName: string;
+  targetBone: HumanBoneName;
+  frames: VmdBoneFrame[];
+}
+
 const MAX_KEYFRAMES = 12000;
+const MMD_REFERENCE_HEIGHT = 20;
 
 function cleanName(fileName: string): string {
   const base = fileName.replace(/\\/g, '/').split('/').pop() ?? fileName;
@@ -246,6 +267,296 @@ function expressionWarnings(parsed: ParsedVmd, mapping: MmdExpressionMapping): s
   return warnings;
 }
 
+function normalizeMmdName(value: string): string {
+  return value.normalize('NFKC').replace(/[\s_.\-・]/g, '').toLowerCase();
+}
+
+function isRootControlName(name: string): boolean {
+  const normalized = normalizeMmdName(name);
+  return [
+    '全ての親', 'すべての親', 'センター', 'グルーブ',
+    'master', 'root', 'center', 'centre', 'groove',
+  ].includes(normalized);
+}
+
+function ikSide(name: string): 'left' | 'right' | null {
+  const normalized = normalizeMmdName(name);
+  if (!isMmdIkBoneName(name) || /つま先|toe/.test(normalized)) return null;
+  if (/^左|left|_l$/.test(normalized)) return 'left';
+  if (/^右|right|_r$/.test(normalized)) return 'right';
+  return null;
+}
+
+function trackPriority(name: string): number {
+  const normalized = normalizeMmdName(name);
+  if (/捩|twist/.test(normalized)) return 20;
+  if (/補助|helper|dummy/.test(normalized)) return 30;
+  return 10;
+}
+
+function buildDirectTracks(
+  parsed: ParsedVmd,
+  availableBones: ReadonlySet<string>,
+): {
+  mapped: Map<HumanBoneName, DirectTrack[]>;
+  roots: Array<{ name: string; frames: VmdBoneFrame[] }>;
+  ik: Map<'left' | 'right', { name: string; frames: VmdBoneFrame[] }>;
+  ignored: string[];
+} {
+  const mapped = new Map<HumanBoneName, DirectTrack[]>();
+  const roots: Array<{ name: string; frames: VmdBoneFrame[] }> = [];
+  const ik = new Map<'left' | 'right', { name: string; frames: VmdBoneFrame[] }>();
+  const ignored: string[] = [];
+
+  for (const [sourceName, frames] of parsed.boneFrames) {
+    if (isRootControlName(sourceName)) {
+      roots.push({ name: sourceName, frames });
+      continue;
+    }
+    const side = ikSide(sourceName);
+    if (side) {
+      const current = ik.get(side);
+      if (!current || frames.length > current.frames.length) ik.set(side, { name: sourceName, frames });
+      continue;
+    }
+    if (isMmdIkBoneName(sourceName)) {
+      ignored.push(sourceName);
+      continue;
+    }
+    const targetBone = guessMmdHumanoidBone(sourceName);
+    if (!targetBone || !availableBones.has(targetBone)) {
+      ignored.push(sourceName);
+      continue;
+    }
+    const list = mapped.get(targetBone) ?? [];
+    list.push({ sourceName, targetBone, frames });
+    list.sort((a, b) => trackPriority(a.sourceName) - trackPriority(b.sourceName));
+    mapped.set(targetBone, list);
+  }
+  return { mapped, roots, ik, ignored };
+}
+
+function sampleCombinedRotation(tracks: DirectTrack[], time: number): THREE.Quaternion {
+  const result = new THREE.Quaternion();
+  for (const track of tracks) {
+    const sampled = sampleVmdBoneTrack(track.frames, time);
+    result.multiply(new THREE.Quaternion().fromArray(sampled.rotation)).normalize();
+  }
+  return result;
+}
+
+function sampleRootControls(
+  roots: Array<{ name: string; frames: VmdBoneFrame[] }>,
+  time: number,
+  scale: number,
+): { position: THREE.Vector3; rotation: THREE.Quaternion } {
+  const position = new THREE.Vector3();
+  const rotation = new THREE.Quaternion();
+  for (const root of roots) {
+    const sampled = sampleVmdBoneTrack(root.frames, time);
+    position.add(new THREE.Vector3().fromArray(sampled.position));
+    rotation.multiply(new THREE.Quaternion().fromArray(sampled.rotation)).normalize();
+  }
+  position.multiplyScalar(scale);
+  return { position, rotation };
+}
+
+function rigPosition(rig: HumanoidRigSnapshot, bone: string): THREE.Vector3 | null {
+  const value = rig.bones[bone]?.restWorldPosition;
+  return value ? new THREE.Vector3().fromArray(value) : null;
+}
+
+function rigRotation(rig: HumanoidRigSnapshot, bone: string): THREE.Quaternion | null {
+  const value = rig.bones[bone]?.restWorldRotation;
+  return value ? new THREE.Quaternion().fromArray(value).normalize() : null;
+}
+
+function solveDirectLegIk(
+  side: 'left' | 'right',
+  sample: ReturnType<typeof sampleVmdBoneTrack>,
+  rig: HumanoidRigSnapshot,
+  translationScale: number,
+): Partial<Record<HumanBoneName, THREE.Quaternion>> | null {
+  const upperName = `${side}UpperLeg` as HumanBoneName;
+  const lowerName = `${side}LowerLeg` as HumanBoneName;
+  const footName = `${side}Foot` as HumanBoneName;
+  const hips = rigPosition(rig, 'hips');
+  const upper = rigPosition(rig, upperName);
+  const lower = rigPosition(rig, lowerName);
+  const foot = rigPosition(rig, footName);
+  const hipsRotation = rigRotation(rig, 'hips');
+  if (!hips || !upper || !lower || !foot || !hipsRotation) return null;
+
+  const inverseHips = hipsRotation.clone().invert();
+  const localUpper = upper.clone().sub(hips).applyQuaternion(inverseHips);
+  const localLower = lower.clone().sub(hips).applyQuaternion(inverseHips);
+  const localFoot = foot.clone().sub(hips).applyQuaternion(inverseHips);
+  const restUpperDirection = localLower.clone().sub(localUpper);
+  const restLowerDirection = localFoot.clone().sub(localLower);
+  const upperLength = restUpperDirection.length();
+  const lowerLength = restLowerDirection.length();
+  if (upperLength < 0.001 || lowerLength < 0.001) return null;
+
+  const target = localFoot.clone().add(new THREE.Vector3().fromArray(sample.position).multiplyScalar(translationScale));
+  const hipToTarget = target.clone().sub(localUpper);
+  const rawDistance = hipToTarget.length();
+  if (rawDistance < 0.0001) return null;
+  const distance = Math.max(0.001, Math.min(rawDistance, upperLength + lowerLength - 0.0001));
+  const direction = hipToTarget.normalize();
+  const along = (upperLength * upperLength - lowerLength * lowerLength + distance * distance) / (2 * distance);
+  const height = Math.sqrt(Math.max(0, upperLength * upperLength - along * along));
+
+  const defaultPole = new THREE.Vector3(0, 0, 1);
+  let pole = localLower.clone().sub(localUpper)
+    .sub(direction.clone().multiplyScalar(localLower.clone().sub(localUpper).dot(direction)));
+  if (pole.lengthSq() < 1e-6) {
+    pole = defaultPole.sub(direction.clone().multiplyScalar(defaultPole.dot(direction)));
+  }
+  if (pole.lengthSq() < 1e-6) pole = new THREE.Vector3(1, 0, 0);
+  pole.normalize();
+
+  const desiredKnee = localUpper.clone()
+    .add(direction.clone().multiplyScalar(along))
+    .add(pole.multiplyScalar(height));
+  const desiredUpperDirection = desiredKnee.clone().sub(localUpper).normalize();
+  const desiredLowerDirection = target.clone().sub(desiredKnee).normalize();
+  const upperWorldDelta = new THREE.Quaternion()
+    .setFromUnitVectors(restUpperDirection.clone().normalize(), desiredUpperDirection)
+    .normalize();
+  const currentLowerDirection = restLowerDirection.clone().normalize().applyQuaternion(upperWorldDelta);
+  const lowerCorrection = new THREE.Quaternion()
+    .setFromUnitVectors(currentLowerDirection, desiredLowerDirection)
+    .normalize();
+  const lowerWorldDelta = lowerCorrection.clone().multiply(upperWorldDelta).normalize();
+  const lowerLocalDelta = upperWorldDelta.clone().invert().multiply(lowerWorldDelta).normalize();
+  const desiredFootWorld = new THREE.Quaternion().fromArray(sample.rotation).normalize();
+  const footLocalDelta = lowerWorldDelta.clone().invert().multiply(desiredFootWorld).normalize();
+
+  return {
+    [upperName]: upperWorldDelta,
+    [lowerName]: lowerLocalDelta,
+    [footName]: footLocalDelta,
+  };
+}
+
+async function retargetDirectVmd(
+  parsed: ParsedVmd,
+  options: MmdMotionRetargetOptions,
+): Promise<RetargetedMmdMotion> {
+  if (!Number.isFinite(parsed.duration) || parsed.duration <= 0) {
+    throw new Error('O VMD corporal não possui duração válida.');
+  }
+  const available = new Set(options.availableBones);
+  const tracks = buildDirectTracks(parsed, available);
+  if (!tracks.mapped.size && !tracks.roots.length && !tracks.ik.size) {
+    throw new Error('Nenhum nome de osso MMD padrão pôde ser associado ao humanoide do VRM aberto.');
+  }
+  const mapping = await expressionMapping(parsed, options);
+  const { effectiveFps, frameCount } = sampling(parsed.duration, options.sampleFps);
+  const vrm0 = options.targetMetaVersion === '0';
+  const safeHeight = Math.max(0.5, Math.min(3, Number(options.targetHeight) || 1.65));
+  const safeRootScale = Math.max(0, Math.min(3, Number(options.rootScale) || 1));
+  const translationScale = (safeHeight / MMD_REFERENCE_HEIGHT) * safeRootScale;
+  const keyframes: Keyframe[] = [];
+
+  for (let frame = 0; frame <= frameCount; frame += 1) {
+    const time = frame === frameCount ? parsed.duration : frame / effectiveFps;
+    const pose: PoseSnapshot = {};
+    for (const [targetBone, sourceTracks] of tracks.mapped) {
+      pose[targetBone] = { rotation: tupleQuaternion(sampleCombinedRotation(sourceTracks, time), vrm0) };
+    }
+
+    const root = sampleRootControls(tracks.roots, time, translationScale);
+    const hipsRotation = new THREE.Quaternion().fromArray(pose.hips?.rotation ?? [0, 0, 0, 1]);
+    const canonicalHips = vrm0
+      ? new THREE.Quaternion(-hipsRotation.x, hipsRotation.y, -hipsRotation.z, hipsRotation.w).normalize()
+      : hipsRotation;
+    const combinedHips = root.rotation.clone().multiply(canonicalHips).normalize();
+    pose.hips = {
+      rotation: tupleQuaternion(combinedHips, vrm0),
+      ...(options.rootMotion ? { position: tuplePosition(root.position, vrm0) } : {}),
+    };
+
+    if (options.targetRig) {
+      for (const side of ['left', 'right'] as const) {
+        const ikTrack = tracks.ik.get(side);
+        if (!ikTrack) continue;
+        const solved = solveDirectLegIk(
+          side,
+          sampleVmdBoneTrack(ikTrack.frames, time),
+          options.targetRig,
+          translationScale,
+        );
+        if (!solved) continue;
+        for (const [bone, rotation] of Object.entries(solved) as Array<[HumanBoneName, THREE.Quaternion]>) {
+          if (!available.has(bone)) continue;
+          pose[bone] = { rotation: tupleQuaternion(rotation, vrm0) };
+        }
+      }
+    } else {
+      for (const side of ['left', 'right'] as const) {
+        const ikTrack = tracks.ik.get(side);
+        if (!ikTrack) continue;
+        const foot = `${side}Foot` as HumanBoneName;
+        if (!available.has(foot)) continue;
+        const sampled = sampleVmdBoneTrack(ikTrack.frames, time);
+        pose[foot] = { rotation: tupleQuaternion(new THREE.Quaternion().fromArray(sampled.rotation), vrm0) };
+      }
+    }
+
+    keyframes.push({
+      id: crypto.randomUUID(),
+      time,
+      pose,
+      ...(mapping.sourceToTarget.size
+        ? { expressions: sampleMmdExpressions(parsed, mapping, time) }
+        : {}),
+      easing: 'linear',
+    });
+  }
+
+  const hasRootMotion = options.rootMotion && keyframes.some((frame) => {
+    const position = frame.pose.hips?.position;
+    return Boolean(position && Math.hypot(position[0], position[1], position[2]) > 0.001);
+  });
+  const warnings = [
+    ...expressionWarnings(parsed, mapping),
+    'VMD convertido diretamente pelos nomes de ossos MMD padrão; PMX/PMD não foi necessário.',
+  ];
+  if (tracks.ik.size && options.targetRig) {
+    warnings.push(`${tracks.ik.size} cadeia(s) de perna IK foram resolvidas usando as proporções reais do VRM aberto.`);
+  } else if (tracks.ik.size) {
+    warnings.push('Foram encontrados canais de perna IK, mas o snapshot do rig VRM não estava disponível; apenas a rotação dos pés foi aplicada.');
+  }
+  if (tracks.ignored.length) {
+    warnings.push(`${tracks.ignored.length} canal(is) MMD auxiliares, de câmera ou IK não humanoide foram ignorados.`);
+  }
+  if (tracks.mapped.size < 12) {
+    warnings.push(`Somente ${tracks.mapped.size} ossos humanoides foram mapeados diretamente. Um PMX/PMD compatível pode melhorar movimentos muito específicos.`);
+  }
+  if (effectiveFps < Math.max(1, Math.min(60, Math.round(options.sampleFps || 30)))) {
+    warnings.push(`Amostragem reduzida para ${effectiveFps} FPS para limitar a timeline.`);
+  }
+
+  return {
+    name: cleanName(options.motionFile.name),
+    sourceModel: options.targetRig ? 'VRM direto com IK pelas proporções do avatar' : 'VRM direto por nomes MMD padrão',
+    sourceFormat: 'VMD',
+    duration: parsed.duration,
+    effectiveFps,
+    mappedBones: new Set([
+      ...tracks.mapped.keys(),
+      ...(tracks.ik.size ? ['leftUpperLeg', 'leftLowerLeg', 'leftFoot', 'rightUpperLeg', 'rightLowerLeg', 'rightFoot'] : []),
+      'hips',
+    ]).size,
+    mappedExpressions: new Set(mapping.sourceToTarget.values()).size,
+    sourceMorphs: parsed.morphFrames.size,
+    keyframes,
+    hasRootMotion,
+    warnings,
+  };
+}
+
 async function retargetMorphOnlyVmd(
   parsed: ParsedVmd,
   options: MmdMotionRetargetOptions,
@@ -434,7 +745,7 @@ export async function retargetMmdMotion(options: MmdMotionRetargetOptions): Prom
       throw new Error('Esse VMD não possui frames de ossos nem morphs faciais.');
     }
     if (!options.sourceModelFiles.length) {
-      throw new Error('Este VMD contém movimento corporal. Selecione o PMX/PMD para resolver o esqueleto, IK e grants.');
+      return retargetDirectVmd(parsed, options);
     }
     const loaded = await loadMmdModel(options.sourceModelFiles);
     try {
