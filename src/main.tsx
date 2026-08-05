@@ -16,6 +16,7 @@ import './reference-pose-preview-fit.css';
 import './rtmw3d-studio.css';
 import './rtmw3d-depth-control.css';
 import './motion-library.css';
+import './motion-library-formats.css';
 
 createRoot(document.getElementById('root')!).render(
   <StrictMode>
