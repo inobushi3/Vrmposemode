@@ -1,11 +1,13 @@
 import { HUMAN_BONES, REQUIRED_VRMA_BONES } from '../constants';
 import type { Keyframe, PoseSnapshot, QuatTuple, Vec3Tuple } from '../types';
+import { useEditorStore } from '../store';
 
 interface ExportOptions {
   name: string;
   keyframes: Keyframe[];
   duration: number;
   interpolation: 'LINEAR' | 'STEP';
+  sourceMetaVersion?: '0' | '1';
 }
 
 interface BufferView {
@@ -65,6 +67,17 @@ function normalizeQuaternion(q: QuatTuple): QuatTuple {
   return [q[0] / length, q[1] / length, q[2] / length, q[3] / length];
 }
 
+function canonicalRotation(rotation: QuatTuple, sourceMetaVersion?: '0' | '1'): QuatTuple {
+  const normalized = normalizeQuaternion(rotation);
+  if (sourceMetaVersion !== '0') return normalized;
+  return [-normalized[0], normalized[1], -normalized[2], normalized[3]];
+}
+
+function canonicalPosition(position: Vec3Tuple, sourceMetaVersion?: '0' | '1'): Vec3Tuple {
+  if (sourceMetaVersion !== '0') return position;
+  return [-position[0], position[1], -position[2]];
+}
+
 function ensureFrames(keyframes: Keyframe[], duration: number): Keyframe[] {
   const frames = [...keyframes].sort((a, b) => a.time - b.time);
   if (frames.length === 0) throw new Error('Adicione pelo menos um keyframe antes de exportar.');
@@ -74,11 +87,15 @@ function ensureFrames(keyframes: Keyframe[], duration: number): Keyframe[] {
   return frames;
 }
 
-function poseValue(pose: PoseSnapshot, bone: string): { rotation: QuatTuple; position: Vec3Tuple } {
+function poseValue(
+  pose: PoseSnapshot,
+  bone: string,
+  sourceMetaVersion?: '0' | '1',
+): { rotation: QuatTuple; position: Vec3Tuple } {
   const value = pose[bone];
   return {
-    rotation: normalizeQuaternion(value?.rotation ?? IDENTITY),
-    position: value?.position ?? ZERO,
+    rotation: canonicalRotation(value?.rotation ?? IDENTITY, sourceMetaVersion),
+    position: canonicalPosition(value?.position ?? ZERO, sourceMetaVersion),
   };
 }
 
@@ -86,6 +103,8 @@ export function exportVrma(options: ExportOptions): ArrayBuffer {
   const frames = ensureFrames(options.keyframes, options.duration);
   const times = frames.map((frame) => Math.max(0, frame.time));
   const maxTime = Math.max(...times, 0.001);
+  const sourceMetaVersion = options.sourceMetaVersion
+    ?? useEditorStore.getState().modelInfo?.metaVersion;
 
   const animatedBones = new Set<string>(REQUIRED_VRMA_BONES);
   for (const frame of frames) {
@@ -112,7 +131,7 @@ export function exportVrma(options: ExportOptions): ArrayBuffer {
   const channels: Array<{ sampler: number; target: { node: number; path: 'rotation' | 'translation' } }> = [];
 
   bones.forEach((bone, nodeIndex) => {
-    const rotations = frames.flatMap((frame) => poseValue(frame.pose, bone).rotation);
+    const rotations = frames.flatMap((frame) => poseValue(frame.pose, bone, sourceMetaVersion).rotation);
     const rotationAccessor = addAccessor(rotations, 'VEC4', frames.length);
     const sampler = samplers.push({ input: timeAccessor, output: rotationAccessor, interpolation: options.interpolation }) - 1;
     channels.push({ sampler, target: { node: nodeIndex, path: 'rotation' } });
@@ -120,7 +139,7 @@ export function exportVrma(options: ExportOptions): ArrayBuffer {
 
   const hipsIndex = bones.indexOf('hips');
   if (hipsIndex >= 0) {
-    const translations = frames.flatMap((frame) => poseValue(frame.pose, 'hips').position);
+    const translations = frames.flatMap((frame) => poseValue(frame.pose, 'hips', sourceMetaVersion).position);
     const translationAccessor = addAccessor(translations, 'VEC3', frames.length);
     const sampler = samplers.push({ input: timeAccessor, output: translationAccessor, interpolation: options.interpolation }) - 1;
     channels.push({ sampler, target: { node: hipsIndex, path: 'translation' } });
