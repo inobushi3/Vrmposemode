@@ -1,0 +1,82 @@
+.motion-format-badge {
+  display: inline-flex;
+  align-items: center;
+  width: fit-content;
+  margin-right: 6px;
+  padding: 2px 5px;
+  border: 1px solid rgba(139,120,255,.22);
+  border-radius: 5px;
+  color: #b9aaff;
+  background: rgba(139,120,255,.09);
+  font-size: 6px;
+  font-weight: 800;
+  line-height: 1;
+  letter-spacing: .35px;
+  text-transform: uppercase;
+}
+
+.motion-format-badge.large {
+  margin-left: auto;
+  margin-right: 0;
+  padding: 5px 8px;
+  font-size: 7px;
+}
+
+.motion-format-badge.format-bvh { color: #8edcff; border-color: rgba(99,202,242,.23); background: rgba(67,170,216,.08); }
+.motion-format-badge.format-fbx { color: #f2b68b; border-color: rgba(236,157,101,.23); background: rgba(217,133,73,.08); }
+.motion-format-badge.format-glb,
+.motion-format-badge.format-gltf { color: #85e1b4; border-color: rgba(78,210,148,.22); background: rgba(61,190,128,.08); }
+.motion-format-badge.format-pmp,
+.motion-format-badge.format-pap { color: #ff9faf; border-color: rgba(255,105,126,.22); background: rgba(255,88,113,.07); }
+
+.motion-library-clip-select {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 10px;
+  padding: 10px;
+  border: 1px solid rgba(255,255,255,.065);
+  border-radius: 10px;
+  background: #121019;
+}
+.motion-library-clip-select > span { color: #81798d; font-size: 8px; text-transform: uppercase; letter-spacing: .36px; }
+.motion-library-clip-select select {
+  width: 100%;
+  height: 34px;
+  padding: 0 9px;
+  border: 1px solid rgba(255,255,255,.075);
+  border-radius: 8px;
+  outline: 0;
+  background: #0d0b14;
+  color: #d9d2e4;
+  font-size: 9px;
+}
+
+.motion-package-summary,
+.motion-library-warning {
+  display: grid;
+  grid-template-columns: 22px minmax(0,1fr);
+  align-items: start;
+  gap: 7px;
+  margin-top: 9px;
+  padding: 10px;
+  border-radius: 9px;
+}
+.motion-package-summary {
+  border: 1px solid rgba(101,191,238,.16);
+  color: #85d6fa;
+  background: rgba(66,164,214,.055);
+}
+.motion-package-summary > span { display: flex; flex-direction: column; gap: 3px; }
+.motion-package-summary strong { color: #c8e7f5; font-size: 8px; }
+.motion-package-summary small { color: #69818c; font-size: 7px; }
+.motion-library-warning {
+  border: 1px solid rgba(255,172,88,.17);
+  color: #eab06e;
+  background: rgba(223,139,55,.055);
+  font-size: 8px;
+  line-height: 1.48;
+}
+.motion-library-warning svg { margin-top: 1px; }
+
+.motion-library-selected > .motion-format-badge { flex: 0 0 auto; }
