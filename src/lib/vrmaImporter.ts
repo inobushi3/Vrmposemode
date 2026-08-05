@@ -16,6 +16,7 @@ export interface VrmaImportOptions {
   sampleFps: number;
   rootMotion: boolean;
   rootScale: number;
+  targetMetaVersion?: '0' | '1';
 }
 
 export interface ImportedVrma {
@@ -40,11 +41,12 @@ function createSampler(track: THREE.KeyframeTrack): TrackSampler {
   return (track as InterpolatableTrack).createInterpolant(buffer);
 }
 
-function quaternionTuple(value: ArrayLike<number>): QuatTuple {
+function quaternionTuple(value: ArrayLike<number>, targetMetaVersion?: '0' | '1'): QuatTuple {
+  const vrm0 = targetMetaVersion === '0';
   const quaternion = new THREE.Quaternion(
-    Number(value[0]) || 0,
+    (Number(value[0]) || 0) * (vrm0 ? -1 : 1),
     Number(value[1]) || 0,
-    Number(value[2]) || 0,
+    (Number(value[2]) || 0) * (vrm0 ? -1 : 1),
     Number(value[3]) || 1,
   ).normalize();
   return [quaternion.x, quaternion.y, quaternion.z, quaternion.w];
@@ -54,11 +56,13 @@ function relativeHipsPosition(
   value: ArrayLike<number>,
   rest: THREE.Vector3,
   scale: number,
+  targetMetaVersion?: '0' | '1',
 ): Vec3Tuple {
+  const axisSign = targetMetaVersion === '0' ? -1 : 1;
   return [
-    (Number(value[0]) - rest.x) * scale,
+    (Number(value[0]) - rest.x) * scale * axisSign,
     (Number(value[1]) - rest.y) * scale,
-    (Number(value[2]) - rest.z) * scale,
+    (Number(value[2]) - rest.z) * scale * axisSign,
   ];
 }
 
@@ -130,13 +134,16 @@ export async function importVrma(
     const time = frame === frameCount ? sourceDuration : frame / effectiveFps;
     const pose: PoseSnapshot = {};
     for (const [bone, sampler] of rotationSamplers) {
-      pose[bone] = { rotation: quaternionTuple(sampler.evaluate(time)) };
+      pose[bone] = {
+        rotation: quaternionTuple(sampler.evaluate(time), options.targetMetaVersion),
+      };
     }
     if (pose.hips && options.rootMotion && hipsSampler) {
       pose.hips.position = relativeHipsPosition(
         hipsSampler.evaluate(time),
         animation.restHipsPosition,
         rootScale,
+        options.targetMetaVersion,
       );
     }
     keyframes.push({
@@ -149,6 +156,9 @@ export async function importVrma(
 
   if (!hipsSampler) warnings.push('Este VRMA não possui deslocamento do quadril; o movimento ficará no lugar.');
   if (!options.rootMotion && hipsSampler) warnings.push('O deslocamento do quadril foi removido pela configuração de root motion.');
+  if (options.targetMetaVersion === '0') {
+    warnings.push('Conversão de eixos VRM 0 aplicada ao root motion e às rotações normalizadas.');
+  }
   const ignoredBones = animation.humanoidTracks.rotation.size - rotationSamplers.size;
   if (ignoredBones > 0) warnings.push(`${ignoredBones} canal(is) foram ignorados porque o modelo aberto não possui esses ossos.`);
   if (animation.expressionTracks.preset.size || animation.expressionTracks.custom.size) {
