@@ -45,7 +45,8 @@ export async function listStoredMotions(): Promise<StoredMotion[]> {
   }
 }
 
-export async function saveMotionFile(file: File, data = await file.arrayBuffer()): Promise<StoredMotion> {
+export async function saveMotionFile(file: File, validatedData?: ArrayBuffer): Promise<StoredMotion> {
+  const data = validatedData ?? await file.arrayBuffer();
   const record: StoredMotion = {
     id: crypto.randomUUID(),
     name: file.name.replace(/\.vrma$/i, '').trim() || 'Movimento VRMA',
