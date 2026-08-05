@@ -52,6 +52,77 @@
   font-size: 9px;
 }
 
+.motion-pap-bridge {
+  margin-bottom: 10px;
+  padding: 11px;
+  border: 1px solid rgba(245,112,150,.2);
+  border-radius: 11px;
+  background: linear-gradient(135deg,rgba(230,74,133,.085),rgba(132,102,255,.045));
+}
+.motion-pap-title {
+  display: grid;
+  grid-template-columns: 25px minmax(0,1fr);
+  align-items: start;
+  gap: 7px;
+  color: #f28fbd;
+}
+.motion-pap-title > span { display: flex; flex-direction: column; gap: 3px; }
+.motion-pap-title strong { color: #e9d4e2; font-size: 9px; }
+.motion-pap-title small { color: #8a7280; font-size: 7px; line-height: 1.48; }
+.motion-pap-files {
+  display: grid;
+  grid-template-columns: minmax(0,1.35fr) minmax(0,1fr);
+  gap: 7px;
+  margin-top: 9px;
+}
+.motion-pap-files button {
+  min-width: 0;
+  height: 34px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 0 9px;
+  overflow: hidden;
+  border: 1px solid rgba(255,255,255,.08);
+  border-radius: 8px;
+  color: #c9bac8;
+  background: #0e0c15;
+  cursor: pointer;
+  font-size: 8px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.motion-pap-files button:last-child {
+  color: #b9aaff;
+  border-color: rgba(139,120,255,.24);
+  background: rgba(139,120,255,.08);
+}
+.motion-pap-files button:disabled { opacity: .45; cursor: not-allowed; }
+.motion-pap-status {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-top: 8px;
+  color: #766876;
+  font-size: 7px;
+  line-height: 1.45;
+}
+.motion-pap-status > div {
+  width: 100%;
+  height: 4px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: #261d29;
+}
+.motion-pap-status i {
+  display: block;
+  height: 100%;
+  border-radius: inherit;
+  background: linear-gradient(90deg,#dd62ae,#8d78ff);
+  transition: width .2s ease;
+}
+
 .motion-package-summary,
 .motion-library-warning {
   display: grid;
@@ -80,3 +151,7 @@
 .motion-library-warning svg { margin-top: 1px; }
 
 .motion-library-selected > .motion-format-badge { flex: 0 0 auto; }
+
+@media (max-width: 980px) {
+  .motion-pap-files { grid-template-columns: 1fr; }
+}
