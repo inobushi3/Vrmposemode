@@ -74,22 +74,17 @@ function createResourceContext(files: File[]): ResourceContext {
   const urls = new Map<File, string>();
   const exact = new Map<string, string>();
   const basename = new Map<string, string>();
-  const knownBlobUrls = new Set<string>();
 
   for (const file of files) {
     const url = URL.createObjectURL(file);
     urls.set(file, url);
-    knownBlobUrls.add(url);
     const path = normalizePath(filePath(file));
     exact.set(path, url);
     basename.set(path.split('/').pop() ?? path, url);
   }
 
   manager.setURLModifier((requested) => {
-    if (/^data:/i.test(requested)) return requested;
-    const bareRequested = requested.replace(/#.*$/, '');
-    if (knownBlobUrls.has(bareRequested)) return requested;
-
+    if (/^(data:|blob:)/i.test(requested)) return requested;
     const normalized = normalizePath(requested);
     const direct = exact.get(normalized);
     if (direct) return direct;
@@ -124,8 +119,10 @@ function loadMesh(loader: MMDLoader, url: string): Promise<THREE.SkinnedMesh> {
 
 export async function loadMmdModel(input: File[]): Promise<LoadedMmdModel> {
   const files = await expandMmdSelection(input);
-  const modelFile = files.find((file) => /\.pmx$/i.test(file.name))
-    ?? files.find((file) => /\.pmd$/i.test(file.name));
+  const modelCandidates = files
+    .filter((file) => /\.(pmx|pmd)$/i.test(file.name))
+    .sort((a, b) => b.size - a.size);
+  const modelFile = modelCandidates[0];
   if (!modelFile) {
     throw new Error('Selecione um modelo .pmx ou .pmd. Para manter texturas, selecione o ZIP completo ou todos os arquivos da pasta.');
   }
@@ -142,6 +139,9 @@ export async function loadMmdModel(input: File[]): Promise<LoadedMmdModel> {
     const warnings: string[] = [];
     if (files.length === 1) {
       warnings.push('Somente o arquivo do modelo foi selecionado. Texturas externas podem aparecer ausentes; prefira um ZIP ou selecione a pasta completa.');
+    }
+    if (modelCandidates.length > 1) {
+      warnings.push(`${modelCandidates.length} modelos foram encontrados. O app escolheu automaticamente ${modelFile.name}, o maior PMX/PMD do pacote.`);
     }
     return {
       mesh,
@@ -176,9 +176,9 @@ export async function loadVmdOnMmdModel(mesh: THREE.SkinnedMesh, file: File): Pr
   }
 }
 
-function loadVpd(loader: MMDLoader, url: string, isUnicode: boolean): Promise<MmdVpd> {
+function loadVpd(loader: MMDLoader, url: string, unicode: boolean): Promise<MmdVpd> {
   return new Promise((resolve, reject) => {
-    loader.loadVPD(url, isUnicode, resolve, undefined, (error) => {
+    loader.loadVPD(url, unicode, resolve, undefined, (error) => {
       reject(error instanceof Error ? error : new Error(String(error || 'Falha ao abrir o VPD.')));
     });
   });
@@ -191,7 +191,7 @@ export async function loadVpdFile(file: File): Promise<MmdVpd> {
     try {
       return await loadVpd(loader, `${url}#pose.vpd`, false);
     } catch {
-      return await loadVpd(new MMDLoader(), `${url}#pose.vpd`, true);
+      return await loadVpd(loader, `${url}#pose.vpd`, true);
     }
   } finally {
     URL.revokeObjectURL(url);
