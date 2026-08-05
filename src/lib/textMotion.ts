@@ -214,7 +214,7 @@ function sanitizeFrames(
       Object.assign(previous.changes, changes);
       previous.easing = easing(rawFrame.easing);
     } else {
-      byFrame.set(frameNumber, { time, t: time, easing: easing(rawFrame.easing), changes });
+      byFrame.set(frameNumber, { t: time, easing: easing(rawFrame.easing), changes });
     }
   }
 
