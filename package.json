@@ -8,7 +8,8 @@
   "scripts": {
     "start": "concurrently -k -s first \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "dev": "npm start",
-    "build": "tsc -b && vite build",
+    "test:pose-pipeline": "node scripts/validate-pose-pipeline.cjs",
+    "build": "npm run test:pose-pipeline && tsc -b && vite build",
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "tsc -b --pretty false"
   },
