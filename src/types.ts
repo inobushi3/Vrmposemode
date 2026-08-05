@@ -15,6 +15,20 @@ export interface Keyframe {
   easing: 'linear' | 'smooth' | 'step';
 }
 
+export interface HumanoidRigBoneSnapshot {
+  parent: string | null;
+  restLocalRotation: QuatTuple;
+  restWorldRotation: QuatTuple;
+  restWorldPosition: Vec3Tuple;
+}
+
+export interface HumanoidRigSnapshot {
+  rootWorldRotation: QuatTuple;
+  heightMeters: number;
+  hipsHeight: number;
+  bones: Record<string, HumanoidRigBoneSnapshot>;
+}
+
 export interface ModelInfo {
   name: string;
   format: 'VRM' | 'GLB' | 'GLTF';
@@ -28,6 +42,7 @@ export interface ModelInfo {
   heightMeters?: number;
   normalizedHipsHeight?: number;
   forwardAxis?: '+Z';
+  humanoidRig?: HumanoidRigSnapshot;
 }
 
 export interface ProjectFile {
