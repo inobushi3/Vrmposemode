@@ -57,9 +57,9 @@ export default function VrmMetaVersionProbe(): null {
   const requestRef = useRef(0);
 
   useEffect(() => {
-    const onLoad = (event: Event): void => {
-      const file = (event as CustomEvent<File>).detail;
-      if (!file) return;
+    const processFile = (file: File): void => {
+      const extension = file.name.split('.').pop()?.toLowerCase();
+      if (!extension || !['vrm', 'glb', 'gltf'].includes(extension)) return;
       const request = ++requestRef.current;
 
       void detectVrmMetaVersion(file).then((metaVersion) => {
@@ -89,8 +89,21 @@ export default function VrmMetaVersionProbe(): null {
       });
     };
 
+    const onLoad = (event: Event): void => {
+      const file = (event as CustomEvent<File>).detail;
+      if (file) processFile(file);
+    };
+    const onDrop = (event: DragEvent): void => {
+      const file = event.dataTransfer?.files?.[0];
+      if (file) processFile(file);
+    };
+
     window.addEventListener(editorEvent.loadModel, onLoad);
-    return () => window.removeEventListener(editorEvent.loadModel, onLoad);
+    document.addEventListener('drop', onDrop, true);
+    return () => {
+      window.removeEventListener(editorEvent.loadModel, onLoad);
+      document.removeEventListener('drop', onDrop, true);
+    };
   }, []);
 
   return null;
