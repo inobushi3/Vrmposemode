@@ -21,7 +21,12 @@ export interface ModelInfo {
   avatarName?: string;
   author?: string;
   version?: string;
+  metaVersion?: string;
   boneCount: number;
+  humanoidValid?: boolean;
+  missingRequiredBones?: string[];
+  heightMeters?: number;
+  forwardAxis?: '+Z';
 }
 
 export interface ProjectFile {
