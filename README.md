@@ -1,6 +1,6 @@
 # VRM Pose Mode
 
-Editor desktop para carregar modelos **VRM**, criar poses e animações por keyframes e exportar o resultado como **VRM Animation (`.vrma`)**.
+Editor desktop para carregar modelos **VRM**, importar e editar movimentos humanoides e exportar o resultado como **VRM Animation (`.vrma`)**.
 
 ## Recursos atuais
 
@@ -10,6 +10,10 @@ Editor desktop para carregar modelos **VRM**, criar poses e animações por keyf
 - Gizmos locais de rotação e translação do quadril
 - Inspector numérico de rotação e posição
 - Biblioteca de poses iniciais
+- Biblioteca local persistente de arquivos `.vrma`
+- Importação oficial `VRMC_vrm_animation` usando `@pixiv/three-vrm-animation`
+- Conversão de VRMA para keyframes comuns e totalmente editáveis
+- Root motion opcional, escala de deslocamento e amostragem em 15/30/60 FPS
 - Timeline com keyframes, reprodução, loop, FPS, duração, zoom e arraste de keyframes
 - Interpolação suave durante a edição
 - Desfazer e refazer alterações da timeline
@@ -33,32 +37,54 @@ npm start
 
 O `npm start` inicia o Vite e abre a janela do Electron automaticamente.
 
-## Fluxo manual
+## Fluxo recomendado
 
 1. Clique em **Abrir modelo** e selecione um `.vrm`.
-2. Escolha um osso na lista ou clique nos pontos do esqueleto.
-3. Rotacione com o gizmo ou use o inspector numérico.
-4. Posicione a timeline e clique em **Keyframe**.
-5. Repita para criar o movimento.
-6. Use **Exportar VRMA**.
+2. Clique em **Movimentos**.
+3. Use **Importar VRMA** e selecione um arquivo `.vrma`.
+4. O arquivo é validado e salvo na biblioteca local do aplicativo.
+5. Escolha 30 FPS, mantenha root motion quando desejar deslocamento e aplique na timeline.
+6. Ajuste qualquer osso ou keyframe manualmente.
+7. Exporte o resultado novamente como VRMA.
+
+A biblioteca usa IndexedDB e permanece somente neste computador. O arquivo VRMA não é enviado para serviços externos.
+
+## Como a importação funciona
+
+O carregador oficial converte o arquivo em canais do humanoide normalizado VRM:
+
+- rotações são associadas pelos nomes oficiais dos ossos humanoides;
+- somente ossos disponíveis no modelo aberto são importados;
+- a posição absoluta do quadril do arquivo é convertida para deslocamento relativo à T-pose;
+- a animação é amostrada no FPS escolhido e transformada em keyframes do editor;
+- timelines muito grandes são limitadas automaticamente;
+- expressões faciais e look-at são informados, mas ainda não entram na timeline corporal.
+
+## Fluxo manual
+
+1. Escolha um osso na lista ou clique nos pontos do esqueleto.
+2. Rotacione com o gizmo ou use o inspector numérico.
+3. Posicione a timeline e clique em **Keyframe**.
+4. Repita para criar ou corrigir o movimento.
+5. Use **Exportar VRMA**.
 
 ## Direção do editor
 
-A geração de animação por texto foi removida. Criar rotações de todos os ossos a partir de uma descrição não ofereceu previsibilidade suficiente para um editor de animação.
+A geração de animação por texto foi removida. O fluxo principal agora usa movimentos humanoides reais e previsíveis.
 
-A direção recomendada para tornar a criação mais fácil é:
+Ordem de desenvolvimento:
 
-- importar movimentos humanoides já existentes;
-- usar uma biblioteca de movimentos e poses reutilizáveis;
-- editar o corpo com controles IK de mãos, pés, cabeça e quadril;
-- manter os keyframes totalmente editáveis antes da exportação.
-
-Esses recursos devem ser implementados diretamente sobre o humanoide normalizado do VRM, sem depender de um modelo de linguagem para inventar ângulos de ossos.
+1. importação e biblioteca VRMA — implementada;
+2. controles IK para mãos, pés, cabeça e quadril;
+3. sequenciador de blocos e transições entre movimentos;
+4. importação BVH;
+5. importação FBX/Mixamo com mapeamento explícito;
+6. captura por imagem/vídeo mantida como ferramenta experimental.
 
 ## Observações
 
-- A exportação `.vrma` requer um modelo VRM com humanoide válido carregado.
-- Arquivos GLB/GLTF podem ser visualizados e manipulados, mas não possuem necessariamente o mapeamento humanoide necessário para VRMA.
+- A aplicação e a exportação `.vrma` exigem um modelo VRM com humanoide válido carregado.
+- Arquivos GLB/GLTF podem ser visualizados e manipulados, mas não possuem necessariamente o mapeamento humanoide necessário.
 - O projeto JSON salva a animação e as configurações, mas não incorpora o arquivo do modelo por questões de tamanho e licença.
 - Para `.gltf` com texturas externas, prefira converter para `.glb` ou `.vrm`, pois o seletor abre um único arquivo.
 - A captura por imagem e vídeo permanece experimental; resultados 2D/3D não garantem retargeting perfeito em todos os avatares.
@@ -76,6 +102,9 @@ Esses recursos devem ser implementados diretamente sobre o humanoide normalizado
 
 - `electron/`: janela desktop e serviços nativos do RTMW3D
 - `src/components/Viewport.tsx`: cena Three.js, carregamento VRM e manipulação
+- `src/components/MotionLibraryStudio.tsx`: biblioteca local e aplicação dos movimentos
+- `src/lib/vrmaImporter.ts`: carregamento oficial e conversão em keyframes
+- `src/lib/motionLibrary.ts`: persistência dos arquivos em IndexedDB
 - `src/lib/poseRetargeter.ts`: adaptação experimental de pose capturada para VRM
 - `src/lib/vrmaExporter.ts`: gerador GLB/VRMA 1.0
 - `src/store.ts`: estado do editor e histórico
