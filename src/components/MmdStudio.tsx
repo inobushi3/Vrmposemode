@@ -9,6 +9,11 @@ import {
 import { useEditorStore } from '../store';
 import { loadMmdModel, type LoadedMmdModel } from '../lib/mmdModelLoader';
 import { retargetMmdMotion, type RetargetedMmdMotion } from '../lib/mmdMotionRetargeter';
+import {
+  expandMmdMotionSelection,
+  parseVmd,
+  type ParsedVmd,
+} from '../lib/mmdVmdParser';
 
 type ImportMode = 'replace' | 'append';
 
@@ -22,9 +27,15 @@ function formatSize(bytes: number): string {
 }
 
 function fileSummary(files: File[]): string {
-  const model = files.find((file) => /\.(pmx|pmd)$/i.test(file.name));
   const archive = files.find((file) => /\.zip$/i.test(file.name));
-  return model?.name ?? archive?.name ?? `${files.length} arquivo(s)`;
+  if (archive) return archive.name;
+  const models = files.filter((file) => /\.(pmx|pmd)$/i.test(file.name));
+  const model = models.sort((a, b) => b.size - a.size)[0];
+  return model?.name ?? `${files.length} arquivo(s)`;
+}
+
+function displayName(file: File): string {
+  return file.name.replace(/\\/g, '/').split('/').pop() ?? file.name;
 }
 
 function disposeObject(root: THREE.Object3D): void {
@@ -40,7 +51,10 @@ export default function MmdStudio(): JSX.Element | null {
   const [toolbarHost, setToolbarHost] = useState<HTMLElement | null>(null);
   const [open, setOpen] = useState(false);
   const [modelFiles, setModelFiles] = useState<File[]>([]);
+  const [motionPackageFiles, setMotionPackageFiles] = useState<File[]>([]);
+  const [motionChoices, setMotionChoices] = useState<File[]>([]);
   const [motionFile, setMotionFile] = useState<File | null>(null);
+  const [motionInfo, setMotionInfo] = useState<ParsedVmd | null>(null);
   const [sampleFps, setSampleFps] = useState(30);
   const [rootMotion, setRootMotion] = useState(true);
   const [rootScale, setRootScale] = useState(1);
@@ -48,7 +62,7 @@ export default function MmdStudio(): JSX.Element | null {
   const [busy, setBusy] = useState(false);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [error, setError] = useState('');
-  const [message, setMessage] = useState('Selecione um modelo PMX/PMD e, opcionalmente, um VMD ou VPD.');
+  const [message, setMessage] = useState('Selecione um ZIP/PMX/PMD e um VMD/VPD. VMD facial pode ser usado sem modelo MMD.');
   const [previewInfo, setPreviewInfo] = useState<{ format: string; bones: number; files: number } | null>(null);
   const [result, setResult] = useState<RetargetedMmdMotion | null>(null);
 
@@ -70,6 +84,11 @@ export default function MmdStudio(): JSX.Element | null {
     () => modelFiles.reduce((sum, file) => sum + file.size, 0),
     [modelFiles],
   );
+  const facialOnly = Boolean(
+    motionFile && /\.vmd$/i.test(motionFile.name)
+    && motionInfo && motionInfo.boneFrameCount === 0 && motionInfo.morphFrameCount > 0,
+  );
+  const sourceModelRequired = Boolean(motionFile && (!facialOnly || /\.vpd$/i.test(motionFile.name)));
 
   useEffect(() => {
     const toolbar = document.querySelector<HTMLElement>('.toolbar');
@@ -86,6 +105,24 @@ export default function MmdStudio(): JSX.Element | null {
     folderInputRef.current?.setAttribute('webkitdirectory', '');
     folderInputRef.current?.setAttribute('directory', '');
   }, [open]);
+
+  useEffect(() => {
+    setMotionInfo(null);
+    if (!motionFile || !/\.vmd$/i.test(motionFile.name)) return;
+    let cancelled = false;
+    void parseVmd(motionFile).then((info) => {
+      if (cancelled) return;
+      setMotionInfo(info);
+      if (info.boneFrameCount === 0 && info.morphFrameCount > 0) {
+        setMessage(`${displayName(motionFile)}: VMD facial/lip com ${info.morphFrameCount} frames de morph. PMX/PMD não é necessário.`);
+      } else {
+        setMessage(`${displayName(motionFile)}: ${info.boneFrameCount} frames de ossos e ${info.morphFrameCount} frames faciais.`);
+      }
+    }).catch((parseError) => {
+      if (!cancelled) setError(readableError(parseError));
+    });
+    return () => { cancelled = true; };
+  }, [motionFile]);
 
   useEffect(() => {
     if (!open || !canvasHostRef.current || !modelFiles.length) {
@@ -211,13 +248,34 @@ export default function MmdStudio(): JSX.Element | null {
     setError('');
   };
 
+  const selectMotionFiles = async (files: FileList | null): Promise<void> => {
+    const selected = files ? Array.from(files) : [];
+    if (!selected.length) return;
+    setError('');
+    setResult(null);
+    try {
+      const expanded = await expandMmdMotionSelection(selected);
+      if (!expanded.motions.length) {
+        throw new Error('O arquivo/ZIP não contém nenhum .vmd ou .vpd.');
+      }
+      setMotionPackageFiles(expanded.files);
+      setMotionChoices(expanded.motions);
+      setMotionFile(expanded.motions[0]);
+      setMessage(expanded.motions.length > 1
+        ? `${expanded.motions.length} movimentos encontrados no pacote. Escolha um na lista.`
+        : `${displayName(expanded.motions[0])} carregado do pacote.`);
+    } catch (selectionError) {
+      setError(readableError(selectionError));
+    }
+  };
+
   const convert = async (): Promise<void> => {
-    if (!modelFiles.length) {
-      setError('Selecione o modelo MMD de origem.');
+    if (!motionFile) {
+      setError('Selecione um movimento .vmd, uma pose .vpd ou um ZIP que contenha esses arquivos.');
       return;
     }
-    if (!motionFile) {
-      setError('Selecione um movimento .vmd ou uma pose .vpd.');
+    if (sourceModelRequired && !modelFiles.length) {
+      setError('Este movimento contém corpo/IK. Selecione o PMX/PMD ou ZIP do modelo MMD de origem.');
       return;
     }
     if (!modelInfo || modelInfo.format !== 'VRM') {
@@ -227,12 +285,16 @@ export default function MmdStudio(): JSX.Element | null {
     setBusy(true);
     setResult(null);
     setError('');
-    setMessage('Executando o VMD no modelo MMD, resolvendo IK e convertendo para o humanoide VRM…');
+    setMessage(facialOnly
+      ? 'Convertendo morphs MMD de rosto e lábios para expressões VRMA…'
+      : 'Executando o VMD no modelo MMD, resolvendo IK e convertendo para o humanoide VRM…');
     try {
       const converted = await retargetMmdMotion({
         sourceModelFiles: modelFiles,
         motionFile,
+        motionPackageFiles,
         availableBones,
+        availableExpressions: modelInfo.availableExpressions ?? [],
         sampleFps,
         rootMotion,
         rootScale,
@@ -254,7 +316,7 @@ export default function MmdStudio(): JSX.Element | null {
       requestAnimationFrame(() => useEditorStore.getState().setCurrentTime(firstTime));
       setResult(converted);
       setMessage(`${converted.name} convertido para ${positioned.length} keyframes VRM.`);
-      setStatus(`${converted.name}: movimento MMD convertido de ${converted.mappedBones} ossos e pronto para exportar como VRMA.`);
+      setStatus(`${converted.name}: ${converted.mappedBones} ossos e ${converted.mappedExpressions} expressões convertidos; pronto para exportar como VRMA.`);
     } catch (conversionError) {
       setError(readableError(conversionError));
     } finally {
@@ -265,7 +327,7 @@ export default function MmdStudio(): JSX.Element | null {
   if (!toolbarHost) return null;
 
   const toolbarButton = createPortal(
-    <button className="secondary-button mmd-toolbar-button" onClick={() => setOpen(true)} title="Abrir modelos PMX/PMD e converter VMD/VPD">
+    <button className="secondary-button mmd-toolbar-button" onClick={() => setOpen(true)} title="Abrir PMX/PMD/ZIP e converter VMD/VPD/ZIP">
       <Sparkles size={16} /> MMD
     </button>,
     toolbarHost,
@@ -282,7 +344,7 @@ export default function MmdStudio(): JSX.Element | null {
           <section className="mmd-studio" role="dialog" aria-modal="true" aria-label="Estúdio MMD">
             <header className="mmd-header">
               <span className="mmd-logo"><Sparkles size={20} /></span>
-              <div><strong>Estúdio MMD</strong><small>PMX/PMD · VMD/VPD · retargeting para VRM</small></div>
+              <div><strong>Estúdio MMD</strong><small>PMX/PMD/ZIP · VMD/VPD/ZIP · corpo e expressões</small></div>
               <span className={`mmd-target ${modelInfo?.format === 'VRM' ? 'ready' : ''}`}>
                 {modelInfo?.format === 'VRM' ? `Destino: ${modelInfo.name}` : 'Abra um VRM para converter'}
               </span>
@@ -297,11 +359,8 @@ export default function MmdStudio(): JSX.Element | null {
               selectModelFiles(event.target.files);
               event.currentTarget.value = '';
             }} />
-            <input ref={motionInputRef} hidden type="file" accept=".vmd,.vpd" onChange={(event) => {
-              const file = event.target.files?.[0] ?? null;
-              setMotionFile(file);
-              setResult(null);
-              setError('');
+            <input ref={motionInputRef} hidden multiple type="file" accept=".vmd,.vpd,.zip,.json,.txt" onChange={(event) => {
+              void selectMotionFiles(event.target.files);
               event.currentTarget.value = '';
             }} />
 
@@ -310,7 +369,7 @@ export default function MmdStudio(): JSX.Element | null {
                 <div className="mmd-preview">
                   <div ref={canvasHostRef} className="mmd-canvas-host" />
                   {!modelFiles.length && (
-                    <div className="mmd-preview-empty"><FileBox size={40} /><strong>Nenhum modelo MMD</strong><span>Selecione PMX/PMD com os recursos ou um ZIP completo.</span></div>
+                    <div className="mmd-preview-empty"><FileBox size={40} /><strong>{facialOnly ? 'Modelo MMD opcional' : 'Nenhum modelo MMD'}</strong><span>{facialOnly ? 'Esse VMD possui somente rosto/lábios e pode ser aplicado diretamente ao VRM.' : 'Selecione PMX/PMD com os recursos ou um ZIP completo.'}</span></div>
                   )}
                   {previewBusy && <div className="mmd-preview-loading"><LoaderCircle size={30} /><span>Carregando MMD…</span></div>}
                 </div>
@@ -325,32 +384,40 @@ export default function MmdStudio(): JSX.Element | null {
               <aside className="mmd-controls">
                 <section className="mmd-card">
                   <div className="mmd-card-title"><FileBox size={15} /><span>Modelo de origem</span></div>
-                  <strong>{modelFiles.length ? fileSummary(modelFiles) : 'Não selecionado'}</strong>
-                  <small>O modelo MMD fornece os ossos, IK e grants corretos usados pelo VMD. Ele não substitui o VRM de destino.</small>
+                  <strong>{modelFiles.length ? fileSummary(modelFiles) : facialOnly ? 'Não necessário para este VMD' : 'Não selecionado'}</strong>
+                  <small>Movimento corporal usa o PMX/PMD para resolver ossos, IK e grants. VMD apenas facial/lip é convertido diretamente.</small>
                 </section>
 
                 <section className="mmd-card">
-                  <div className="mmd-card-title"><Sparkles size={15} /><span>Movimento ou pose</span></div>
+                  <div className="mmd-card-title"><Sparkles size={15} /><span>Movimento, pose ou pacote</span></div>
                   <button className="mmd-motion-picker" onClick={() => motionInputRef.current?.click()} disabled={busy}>
-                    <Upload size={14} /> {motionFile?.name ?? 'Selecionar VMD/VPD'}
+                    <Upload size={14} /> {motionFile ? displayName(motionFile) : 'Selecionar VMD/VPD/ZIP'}
                   </button>
-                  <small>VMD vira animação editável. VPD vira uma pose estática exportável.</small>
+                  {motionChoices.length > 1 && (
+                    <select className="mmd-motion-select" value={motionChoices.indexOf(motionFile ?? motionChoices[0])} onChange={(event) => setMotionFile(motionChoices[Number(event.target.value)] ?? motionChoices[0])}>
+                      {motionChoices.map((file, index) => <option key={`${file.name}-${index}`} value={index}>{displayName(file)}</option>)}
+                    </select>
+                  )}
+                  {motionInfo && (
+                    <small>{motionInfo.boneFrameCount} frames de ossos · {motionInfo.morphFrameCount} frames faciais · {motionInfo.duration.toFixed(2)}s</small>
+                  )}
+                  {!motionInfo && <small>ZIPs de movimento são abertos e os VMD/VPD internos aparecem para seleção.</small>}
                 </section>
 
                 <div className="mmd-settings-grid">
                   <label><span><Gauge size={14} /> Amostragem</span><select value={sampleFps} onChange={(event) => setSampleFps(Number(event.target.value))}><option value={15}>15 FPS</option><option value={30}>30 FPS</option><option value={60}>60 FPS</option></select></label>
                   <label><span><Upload size={14} /> Timeline</span><select value={importMode} onChange={(event) => setImportMode(event.target.value as ImportMode)}><option value="replace">Substituir</option><option value="append">Inserir no cursor</option></select></label>
-                  <label className="mmd-toggle"><span><Move3D size={14} /> Root motion</span><input type="checkbox" checked={rootMotion} onChange={(event) => setRootMotion(event.target.checked)} /></label>
-                  <label><span>Escala <b>{rootScale.toFixed(2)}×</b></span><input type="range" min={0} max={2} step={0.05} disabled={!rootMotion} value={rootScale} onChange={(event) => setRootScale(Number(event.target.value))} /></label>
+                  <label className="mmd-toggle"><span><Move3D size={14} /> Root motion</span><input type="checkbox" disabled={facialOnly} checked={rootMotion} onChange={(event) => setRootMotion(event.target.checked)} /></label>
+                  <label><span>Escala <b>{rootScale.toFixed(2)}×</b></span><input type="range" min={0} max={2} step={0.05} disabled={!rootMotion || facialOnly} value={rootScale} onChange={(event) => setRootScale(Number(event.target.value))} /></label>
                 </div>
 
                 <div className="mmd-note">
-                  O VMD é executado primeiro no PMX/PMD, incluindo IK e grants. Depois o app calcula os deltas da pose de repouso e converte o corpo para os ossos normalizados do VRM.
+                  VMD corporal é executado no PMX/PMD antes do retargeting. Morphs de rosto e lábios são associados às expressões disponíveis no VRM e também entram no VRMA exportado.
                 </div>
 
                 {result && (
                   <div className="mmd-result">
-                    <Check size={19} /><div><strong>{result.name}</strong><span>{result.duration.toFixed(2)}s · {result.keyframes.length} keyframes · {result.mappedBones} ossos</span>{result.warnings.map((warning) => <small key={warning}>{warning}</small>)}</div>
+                    <Check size={19} /><div><strong>{result.name}</strong><span>{result.duration.toFixed(2)}s · {result.keyframes.length} keyframes · {result.mappedBones} ossos · {result.mappedExpressions} expressões</span>{result.warnings.map((warning) => <small key={warning}>{warning}</small>)}</div>
                   </div>
                 )}
                 {error && <div className="mmd-error">{error}</div>}
@@ -361,13 +428,16 @@ export default function MmdStudio(): JSX.Element | null {
             <footer className="mmd-footer">
               <button className="mmd-reset" disabled={busy} onClick={() => {
                 setModelFiles([]);
+                setMotionPackageFiles([]);
+                setMotionChoices([]);
                 setMotionFile(null);
+                setMotionInfo(null);
                 setResult(null);
                 setError('');
                 setMessage('Seleção MMD limpa.');
               }}><RotateCcw size={14} /> Limpar</button>
               <button className="mmd-close" disabled={busy} onClick={() => setOpen(false)}>Fechar</button>
-              <button className="mmd-convert" disabled={busy || !modelFiles.length || !motionFile || modelInfo?.format !== 'VRM'} onClick={() => void convert()}>
+              <button className="mmd-convert" disabled={busy || !motionFile || (sourceModelRequired && !modelFiles.length) || modelInfo?.format !== 'VRM'} onClick={() => void convert()}>
                 {busy ? <LoaderCircle className="mmd-spin" size={15} /> : <Play size={15} fill="currentColor" />} Converter para timeline
               </button>
             </footer>
