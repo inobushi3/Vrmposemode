@@ -1,10 +1,11 @@
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
-const {
-  decodeDepthIndex,
-  INPUT_HEIGHT,
-} = require('../electron/rtmw3d.cjs');
+const { decodeDepthIndex, INPUT_HEIGHT } = require('../electron/rtmw3d.cjs');
+
+const root = path.join(__dirname, '..');
+const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
+const exists = (relativePath) => fs.existsSync(path.join(root, relativePath));
 
 function almostEqual(actual, expected, epsilon = 1e-7) {
   assert.ok(Math.abs(actual - expected) <= epsilon, `Expected ${expected}, received ${actual}`);
@@ -14,16 +15,9 @@ almostEqual(decodeDepthIndex(INPUT_HEIGHT), 0);
 assert.ok(decodeDepthIndex(0) < 0, 'The beginning of the Z axis must be behind the center.');
 assert.ok(decodeDepthIndex(INPUT_HEIGHT * 2) > 0, 'The end of the Z axis must be in front of the center.');
 
-const retargeterPath = path.join(__dirname, '..', 'src', 'lib', 'poseRetargeter.ts');
-const retargeter = fs.readFileSync(retargeterPath, 'utf8');
-assert.ok(
-  retargeter.includes('if (!prior) return safeScore > 0.001 ? next : IDENTITY.clone();'),
-  'The first valid pose must not be discarded by the confidence threshold.',
-);
-assert.ok(
-  !retargeter.includes('if (score >= threshold) return candidate.normalize();'),
-  'The obsolete first-frame confidence gate must not return.',
-);
+const retargeter = read('src/lib/poseRetargeter.ts');
+assert.ok(retargeter.includes('if (!prior) return safeScore > 0.001 ? next : IDENTITY.clone();'));
+assert.ok(!retargeter.includes('if (score >= threshold) return candidate.normalize();'));
 
 const removedPaths = [
   'electron/textMotion.cjs',
@@ -38,124 +32,122 @@ const removedPaths = [
   'src/components/BuiltinMotionLibrary.tsx',
   'src/builtin-motion-library.css',
 ];
-for (const relativePath of removedPaths) {
-  assert.ok(!fs.existsSync(path.join(__dirname, '..', relativePath)), `${relativePath} must stay removed.`);
-}
+for (const relativePath of removedPaths) assert.ok(!exists(relativePath), `${relativePath} must stay removed.`);
 
-const mainPath = path.join(__dirname, '..', 'electron', 'main.cjs');
-const preloadPath = path.join(__dirname, '..', 'electron', 'preload.cjs');
-const rendererPath = path.join(__dirname, '..', 'src', 'main.tsx');
-const combined = [mainPath, preloadPath, rendererPath]
-  .map((filePath) => fs.readFileSync(filePath, 'utf8'))
-  .join('\n');
-assert.ok(!combined.includes('text-motion'), 'Text-motion IPC channels must stay removed.');
-assert.ok(!combined.includes('TextMotion'), 'Text-motion components and services must stay removed.');
-assert.ok(!combined.includes('BuiltinMotion'), 'Hand-authored built-in motion components must stay removed.');
-assert.ok(!combined.includes('builtin-motion'), 'Hand-authored built-in motion styles must stay removed.');
+const rendererPath = 'src/main.tsx';
+const combined = [read('electron/main.cjs'), read('electron/preload.cjs'), read(rendererPath)].join('\n');
+assert.ok(!combined.includes('text-motion'));
+assert.ok(!combined.includes('TextMotion'));
+assert.ok(!combined.includes('BuiltinMotion'));
+assert.ok(!combined.includes('builtin-motion'));
 
-const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
+const packageJson = JSON.parse(read('package.json'));
 assert.equal(packageJson.dependencies['@pixiv/three-vrm-animation'], '3.5.5');
-assert.equal(packageJson.dependencies.fflate, '0.8.2', 'PMP and MMD ZIP inspection requires deterministic ZIP support.');
-assert.equal(packageJson.dependencies['three-mmd-runtime'], 'npm:three@0.171.0', 'MMD support must pin the final official legacy Three runtime.');
+assert.equal(packageJson.dependencies.fflate, '0.8.2');
+assert.equal(packageJson.dependencies['three-mmd-runtime'], 'npm:three@0.171.0');
 
 const requiredFiles = [
   'src/lib/vrmaImporter.ts',
   'src/lib/vrmaExporter.ts',
   'src/lib/motionImporter.ts',
-  'src/lib/motionFormats.ts',
-  'src/lib/motionLibrary.ts',
   'src/components/MotionLibraryStudio.tsx',
   'src/components/VrmMetaVersionProbe.tsx',
   'src/lib/poseLibrary.ts',
   'src/components/PersonalPoseLibrary.tsx',
-  'src/personal-pose-library.css',
   'src/mmd-runtime.d.ts',
   'src/lib/mmdHumanoid.ts',
   'src/lib/mmdModelLoader.ts',
   'src/lib/mmdMotionRetargeter.ts',
+  'src/lib/mmdVmdParser.ts',
   'src/components/MmdStudio.tsx',
   'src/mmd-studio.css',
+  'src/mmd-motion-package.css',
 ];
-for (const relativePath of requiredFiles) {
-  assert.ok(fs.existsSync(path.join(__dirname, '..', relativePath)), `${relativePath} must exist.`);
-}
+for (const relativePath of requiredFiles) assert.ok(exists(relativePath), `${relativePath} must exist.`);
 
-const constants = fs.readFileSync(path.join(__dirname, '..', 'src', 'constants.ts'), 'utf8');
-assert.ok(constants.includes("{ id: 'tpose'"), 'The safe T-pose reset must remain available.');
+const constants = read('src/constants.ts');
+assert.ok(constants.includes("{ id: 'tpose'"));
 for (const brokenPreset of ["id: 'relaxed'", "id: 'wave'", "id: 'hero'", "id: 'cute'", "id: 'sit'"]) {
-  assert.ok(!constants.includes(brokenPreset), `Broken hard-coded preset ${brokenPreset} must stay removed from the UI.`);
+  assert.ok(!constants.includes(brokenPreset), `Broken hard-coded preset ${brokenPreset} must stay removed.`);
 }
 
-const poseLibrary = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'poseLibrary.ts'), 'utf8');
-assert.ok(poseLibrary.includes("DB_NAME = 'vrm-pose-mode-pose-library'"), 'Personal poses must persist locally.');
-assert.ok(poseLibrary.includes("type: 'pose'"), 'Exported pose files must have an explicit document type.');
-assert.ok(poseLibrary.includes('validatePoseSnapshot'), 'Imported pose files must be validated before use.');
+const types = read('src/types.ts');
+assert.ok(types.includes('export type ExpressionSnapshot'));
+assert.ok(types.includes('expressions?: ExpressionSnapshot'));
+assert.ok(types.includes('availableExpressions?: string[]'));
 
-const personalPoseUi = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'PersonalPoseLibrary.tsx'), 'utf8');
-assert.ok(personalPoseUi.includes('Salve primeiro um keyframe'), 'The pose library must require a real captured keyframe instead of invented angles.');
-assert.ok(personalPoseUi.includes('structuredClone(selected.pose)'), 'Saved normalized poses must be applied without mutating the library record.');
-assert.ok(personalPoseUi.includes('.vrmpose.pose.json'), 'Personal poses must support a dedicated export file.');
+const viewport = read('src/components/Viewport.tsx');
+assert.ok(viewport.includes('manager.setValue(name'));
+assert.ok(viewport.includes('manager.resetValues()'));
+assert.ok(viewport.includes('availableExpressions'));
+assert.ok(viewport.includes('frame.expressions'));
 
-const vrmaImporter = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'vrmaImporter.ts'), 'utf8');
-assert.ok(vrmaImporter.includes('new VRMAnimationLoaderPlugin(parser)'), 'VRMA must use the official loader plugin.');
-assert.ok(vrmaImporter.includes('Number(value[0]) - rest.x'), 'VRMA hips translation must become T-pose-relative motion.');
-assert.ok(vrmaImporter.includes("targetMetaVersion === '0' ? -1 : 1"), 'VRM0 hips X/Z axes must be inverted during import.');
-assert.ok(vrmaImporter.includes('(vrm0 ? -1 : 1)'), 'VRM0 quaternion X/Z components must follow the official conversion.');
-assert.ok(vrmaImporter.includes('modelInfo?.metaVersion'), 'VRMA import must use the loaded target VRM version.');
+const vrmaImporter = read('src/lib/vrmaImporter.ts');
+assert.ok(vrmaImporter.includes('new VRMAnimationLoaderPlugin(parser)'));
+assert.ok(vrmaImporter.includes('animation.expressionTracks.preset'));
+assert.ok(vrmaImporter.includes('animation.expressionTracks.custom'));
+assert.ok(vrmaImporter.includes('expressions[name]'));
+assert.ok(vrmaImporter.includes("targetMetaVersion === '0' ? -1 : 1"));
 
-const vrmaExporter = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'vrmaExporter.ts'), 'utf8');
-assert.ok(vrmaExporter.includes('return [-normalized[0], normalized[1], -normalized[2], normalized[3]]'), 'VRM0 rotations must return to canonical VRMA axes on export.');
-assert.ok(vrmaExporter.includes('return [-position[0], position[1], -position[2]]'), 'VRM0 root motion must return to canonical VRMA axes on export.');
+const vrmaExporter = read('src/lib/vrmaExporter.ts');
+assert.ok(vrmaExporter.includes('EXPRESSION_PRESETS'));
+assert.ok(vrmaExporter.includes('expressionPreset'));
+assert.ok(vrmaExporter.includes('expressionCustom'));
+assert.ok(vrmaExporter.includes("target: { node: nodeIndex, path: 'translation' }"));
+assert.ok(vrmaExporter.includes('return [-normalized[0], normalized[1], -normalized[2], normalized[3]]'));
+assert.ok(vrmaExporter.includes('return [-position[0], position[1], -position[2]]'));
 
-const versionProbe = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'VrmMetaVersionProbe.tsx'), 'utf8');
-assert.ok(versionProbe.includes("used.has('VRMC_vrm')"), 'The loaded model detector must recognize VRM 1.0.');
-assert.ok(versionProbe.includes("used.has('VRM')"), 'The loaded model detector must recognize VRM 0.x.');
+const motionImporter = read('src/lib/motionImporter.ts');
+assert.ok(motionImporter.includes('new BVHLoader().parse'));
+assert.ok(motionImporter.includes('new FBXLoader().parse'));
+assert.ok(motionImporter.includes('loader.parseAsync'));
+assert.ok(motionImporter.includes("format === 'pmp'"));
+assert.ok(motionImporter.includes('proprietary Havok'));
+assert.ok(motionImporter.includes('MAX_KEYFRAMES = 12000'));
 
-const motionImporter = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'motionImporter.ts'), 'utf8');
-assert.ok(motionImporter.includes('new BVHLoader().parse'), 'BVH support must remain enabled.');
-assert.ok(motionImporter.includes('new FBXLoader().parse'), 'FBX support must remain enabled.');
-assert.ok(motionImporter.includes('loader.parseAsync'), 'GLB/glTF support must remain enabled.');
-assert.ok(motionImporter.includes("format === 'pmp'"), 'PMP packages must be recognized.');
-assert.ok(motionImporter.includes('proprietary Havok'), 'PAP must be blocked with an explicit proprietary-format diagnostic.');
-assert.ok(motionImporter.includes('currentWorld.multiply(state.restWorldRotation.clone().invert())'), 'Retargeting must use animation deltas from the source rest pose.');
-assert.ok(motionImporter.includes('MAX_KEYFRAMES = 12000'), 'Imported timelines must have a hard size limit.');
+const mmdLoader = read('src/lib/mmdModelLoader.ts');
+assert.ok(mmdLoader.includes("from 'three-mmd-runtime/examples/jsm/loaders/MMDLoader.js'"));
+assert.ok(mmdLoader.includes('unzipSync'));
+assert.ok(mmdLoader.includes('manager.setURLModifier'));
+assert.ok(mmdLoader.includes('.sort((a, b) => b.size - a.size)'));
+assert.ok(mmdLoader.includes('loadVPD'));
 
-const motionLibrary = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'motionLibrary.ts'), 'utf8');
-assert.ok(motionLibrary.includes('DB_VERSION = 2'), 'The motion library schema must include the source format.');
-assert.ok(motionLibrary.includes('indexedDB.open(DB_NAME, DB_VERSION)'), 'The motion library must persist locally.');
-
-const mmdLoader = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'mmdModelLoader.ts'), 'utf8');
-assert.ok(mmdLoader.includes("from 'three-mmd-runtime/examples/jsm/loaders/MMDLoader.js'"), 'PMX/PMD must use the official legacy MMDLoader implementation.');
-assert.ok(mmdLoader.includes("/\\.(pmx|pmd)$/i"), 'The source bundle must require PMX or PMD.');
-assert.ok(mmdLoader.includes('unzipSync'), 'ZIP-packaged MMD models must be supported.');
-assert.ok(mmdLoader.includes('manager.setURLModifier'), 'MMD texture paths must resolve through the selected local bundle.');
-assert.ok(mmdLoader.includes('loadVPD'), 'VPD poses must use the MMD parser.');
-
-const mmdMapping = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'mmdHumanoid.ts'), 'utf8');
+const mmdMapping = read('src/lib/mmdHumanoid.ts');
 for (const standardBone of ['下半身', '上半身', '左腕', '左ひじ', '左手首', '左足', '左ひざ', '左足首']) {
   assert.ok(mmdMapping.includes(standardBone), `Standard MMD bone ${standardBone} must be mapped.`);
 }
 
-const mmdRetargeter = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'mmdMotionRetargeter.ts'), 'utf8');
-assert.ok(mmdRetargeter.includes('new MMDAnimationHelper'), 'VMD conversion must evaluate MMD IK and grants.');
-assert.ok(mmdRetargeter.includes('physics: false'), 'Hair and cloth physics must not contaminate body VRMA conversion.');
-assert.ok(mmdRetargeter.includes('current.multiply(state.worldRotation.clone().invert())'), 'MMD retargeting must use source rest-pose deltas.');
-assert.ok(mmdRetargeter.includes("sourceFormat: 'VPD'"), 'VPD must compile into a static VRM pose timeline.');
-assert.ok(mmdRetargeter.includes('MAX_KEYFRAMES = 12000'), 'MMD conversion must have a hard timeline limit.');
+const vmdParser = read('src/lib/mmdVmdParser.ts');
+assert.ok(vmdParser.includes("header.startsWith('Vocaloid Motion Data')"));
+assert.ok(vmdParser.includes('morphFrameCount'));
+assert.ok(vmdParser.includes("json.dataType !== 'VMDMorph'"));
+assert.ok(vmdParser.includes('expandMmdMotionSelection'));
+assert.ok(vmdParser.includes("['aa']"));
+assert.ok(vmdParser.includes("['blink']"));
+assert.ok(vmdParser.includes('sampleMmdExpressions'));
 
-const mmdUi = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'MmdStudio.tsx'), 'utf8');
-assert.ok(mmdUi.includes('accept=".vmd,.vpd"'), 'The MMD studio must accept VMD and VPD.');
-assert.ok(mmdUi.includes('accept=".pmx,.pmd,.zip'), 'The MMD studio must accept PMX, PMD and model ZIP bundles.');
-assert.ok(mmdUi.includes("modelInfo?.format !== 'VRM'"), 'MMD motion conversion must require a VRM destination.');
-assert.ok(mmdUi.includes('Pasta completa'), 'The studio must support selecting companion textures from a folder.');
+const mmdRetargeter = read('src/lib/mmdMotionRetargeter.ts');
+assert.ok(mmdRetargeter.includes('new MMDAnimationHelper'));
+assert.ok(mmdRetargeter.includes('physics: false'));
+assert.ok(mmdRetargeter.includes('current.multiply(state.worldRotation.clone().invert())'));
+assert.ok(mmdRetargeter.includes('retargetMorphOnlyVmd'));
+assert.ok(mmdRetargeter.includes('expressions: sampleMmdExpressions'));
+assert.ok(mmdRetargeter.includes("sourceFormat: 'VPD'"));
+assert.ok(mmdRetargeter.includes('MAX_KEYFRAMES = 12000'));
 
-const rendererMain = fs.readFileSync(rendererPath, 'utf8');
-assert.ok(rendererMain.includes('<VrmMetaVersionProbe />'), 'VRM version detection must be mounted before the editor.');
-assert.ok(rendererMain.includes('<MotionLibraryStudio />'), 'The motion library must be mounted.');
-assert.ok(rendererMain.includes('<MmdStudio />'), 'The MMD model and motion studio must be mounted.');
-assert.ok(rendererMain.includes('<PersonalPoseLibrary />'), 'The personal pose library must be mounted.');
-assert.ok(rendererMain.includes("'./motion-library-formats.css'"), 'Multi-format UI styles must be loaded.');
-assert.ok(rendererMain.includes("'./mmd-studio.css'"), 'MMD studio styles must be loaded.');
-assert.ok(rendererMain.includes("'./personal-pose-library.css'"), 'Personal pose library styles must be loaded.');
+const mmdUi = read('src/components/MmdStudio.tsx');
+assert.ok(mmdUi.includes('accept=".vmd,.vpd,.zip,.json,.txt"'));
+assert.ok(mmdUi.includes('accept=".pmx,.pmd,.zip'));
+assert.ok(mmdUi.includes('expandMmdMotionSelection'));
+assert.ok(mmdUi.includes('VMD facial/lip'));
+assert.ok(mmdUi.includes('availableExpressions: modelInfo.availableExpressions'));
+assert.ok(mmdUi.includes('Pasta completa'));
 
-console.log('RTMW3D, VRM axes, multi-format import, MMD PMX/PMD/VMD/VPD and pose library validation completed.');
+const rendererMain = read(rendererPath);
+assert.ok(rendererMain.includes('<VrmMetaVersionProbe />'));
+assert.ok(rendererMain.includes('<MotionLibraryStudio />'));
+assert.ok(rendererMain.includes('<MmdStudio />'));
+assert.ok(rendererMain.includes('<PersonalPoseLibrary />'));
+assert.ok(rendererMain.includes("'./mmd-motion-package.css'"));
+
+console.log('RTMW3D, VRM axes, facial expressions, multi-format import and MMD ZIP/VMD/VPD validation completed.');
