@@ -12,6 +12,7 @@ const INPUT_HEIGHT = 384;
 const INPUT_PIXELS = INPUT_WIDTH * INPUT_HEIGHT;
 const MIN_MODEL_BYTES = 10 * 1024 * 1024;
 const Z_RANGE = 2.1744869;
+const SIMCC_SPLIT_RATIO = 2;
 
 function argmax(data, offset, length) {
   let bestIndex = 0;
@@ -48,6 +49,14 @@ function findOutput(session, outputs, axis, fallbackIndex) {
   return value;
 }
 
+function decodeDepthIndex(zIndex) {
+  // Implementação equivalente ao pós-processamento oficial do RTMPose3d:
+  // 1) divide todas as coordenadas pelo simcc_split_ratio (2);
+  // 2) normaliza Z pela metade da altura da entrada.
+  const keypointZ = zIndex / SIMCC_SPLIT_RATIO;
+  return (keypointZ / (INPUT_HEIGHT / 2) - 1) * Z_RANGE;
+}
+
 function decodeOutputs(session, outputs) {
   const simccX = findOutput(session, outputs, 'x', 0);
   const simccY = findOutput(session, outputs, 'y', 1);
@@ -72,9 +81,9 @@ function decodeOutputs(session, outputs) {
     const [yIndex, yScore] = argmax(dataY, index * binsY, binsY);
     const [zIndex] = argmax(dataZ, index * binsZ, binsZ);
     keypoints.push({
-      x: xIndex / 2,
-      y: yIndex / 2,
-      z: (zIndex / (INPUT_HEIGHT / 2) - 1) * Z_RANGE,
+      x: xIndex / SIMCC_SPLIT_RATIO,
+      y: yIndex / SIMCC_SPLIT_RATIO,
+      z: decodeDepthIndex(zIndex),
       score: Math.min(xScore, yScore),
     });
   }
@@ -243,4 +252,11 @@ class Rtmw3dService {
   }
 }
 
-module.exports = { Rtmw3dService, MODEL_URL, MODEL_FILE, INPUT_WIDTH, INPUT_HEIGHT };
+module.exports = {
+  Rtmw3dService,
+  MODEL_URL,
+  MODEL_FILE,
+  INPUT_WIDTH,
+  INPUT_HEIGHT,
+  decodeDepthIndex,
+};
