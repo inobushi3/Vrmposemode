@@ -72,6 +72,14 @@ function quaternionTuple(value: THREE.Quaternion): QuatTuple {
   return [normalized.x, normalized.y, normalized.z, normalized.w];
 }
 
+function validQuaternion(value: THREE.Quaternion): boolean {
+  return value.lengthSq() > 1e-10
+    && Number.isFinite(value.x)
+    && Number.isFinite(value.y)
+    && Number.isFinite(value.z)
+    && Number.isFinite(value.w);
+}
+
 function basisQuaternion(xInput: THREE.Vector3, yInput: THREE.Vector3, fallback: THREE.Quaternion): THREE.Quaternion {
   const x = xInput.clone().normalize();
   let y = yInput.clone().sub(x.clone().multiplyScalar(yInput.dot(x)));
@@ -101,9 +109,29 @@ function resolveRotation(
   threshold: number,
   previous: PoseSnapshot | undefined,
 ): THREE.Quaternion {
-  if (score >= threshold) return candidate.normalize();
-  const prior = previous?.[bone]?.rotation;
-  return prior ? new THREE.Quaternion().fromArray(prior).normalize() : IDENTITY.clone();
+  const priorTuple = previous?.[bone]?.rotation;
+  const prior = priorTuple
+    ? new THREE.Quaternion().fromArray(priorTuple).normalize()
+    : null;
+
+  if (!validQuaternion(candidate)) return prior ?? IDENTITY.clone();
+  const next = candidate.clone().normalize();
+  const safeScore = clamp01(score);
+
+  // A primeira pose não tem um quadro anterior que possa ser preservado.
+  // O comportamento antigo devolvia identidade sempre que score < threshold,
+  // descartando quase todo o esqueleto de imagens com confiança média abaixo
+  // do slider. Uma primeira rotação geometricamente válida deve ser aplicada.
+  if (!prior) return safeScore > 0.001 ? next : IDENTITY.clone();
+
+  // Em sequências, confiança controla quanto aceitamos o novo quadro; ela não
+  // transforma o osso em identidade. Pontos praticamente ausentes mantêm o
+  // quadro anterior, enquanto os demais são mesclados de forma contínua.
+  if (safeScore <= 0.001) return prior;
+  const safeThreshold = Math.max(0.05, clamp01(threshold));
+  const trust = clamp01(safeScore / safeThreshold);
+  const blend = 0.2 + trust * 0.8;
+  return prior.slerp(next, blend).normalize();
 }
 
 function setRotation(pose: PoseSnapshot, bone: string, rotation: THREE.Quaternion): void {
@@ -200,7 +228,7 @@ function retargetFrame(
 
   const chestCandidate = basisQuaternion(shoulderAxis, torsoUp, hipsWorld);
   const chestScore = minimumConfidence(world, [11, 12, 23, 24]);
-  const chestWorldTarget = chestScore >= threshold ? chestCandidate : hipsWorld.clone();
+  const chestWorldTarget = chestCandidate;
   const spineWorldCandidate = hipsWorld.clone().slerp(chestWorldTarget, 0.42);
   const spineLocal = resolveRotation('spine', localFromWorld(hipsWorld, spineWorldCandidate), chestScore, threshold, previousPose);
   const spineWorld = hipsWorld.clone().multiply(spineLocal);
@@ -225,7 +253,7 @@ function retargetFrame(
   if (headY.lengthSq() < 1e-8) headY = Y_POS.clone().applyQuaternion(upperChestWorld);
   const headCandidate = basisQuaternion(headX, headY, upperChestWorld);
   const headScore = minimumConfidence(world, [0, 7, 8, 11, 12]);
-  const headWorldTarget = headScore >= threshold ? headCandidate : upperChestWorld.clone();
+  const headWorldTarget = headCandidate;
   const neckWorldCandidate = upperChestWorld.clone().slerp(headWorldTarget, 0.45);
   const neckLocal = resolveRotation('neck', localFromWorld(upperChestWorld, neckWorldCandidate), headScore, threshold, previousPose);
   const neckWorld = upperChestWorld.clone().multiply(neckLocal);
