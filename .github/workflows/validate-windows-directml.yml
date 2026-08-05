@@ -27,6 +27,16 @@ jobs:
       - name: Typecheck and build
         run: npm run build
 
+      - name: Install XAT Visual C++ prerequisite
+        shell: pwsh
+        run: |
+          $redist = Join-Path $env:RUNNER_TEMP 'vcredist_x86_2012.exe'
+          Invoke-WebRequest -Uri 'https://download.microsoft.com/download/1/6/B/16B06F60-3B20-4FF2-B699-5E9B7962F9AE/VSU_4/vcredist_x86.exe' -OutFile $redist
+          $process = Start-Process -FilePath $redist -ArgumentList '/install','/quiet','/norestart' -Wait -PassThru
+          if ($process.ExitCode -notin @(0, 1638, 3010)) {
+            throw "Visual C++ 2012 x86 installation failed with exit code $($process.ExitCode)."
+          }
+
       - name: Smoke test official XAT runtime
         shell: pwsh
         run: |
