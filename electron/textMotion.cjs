@@ -119,9 +119,9 @@ function inferRequestedActions(prompt) {
   if (runIndex >= 0) push(runIndex, { type: 'run', steps: wordNumber(stepMatch?.[1], 4), direction });
   else if (walkIndex >= 0) push(walkIndex, { type: 'walk', steps: wordNumber(stepMatch?.[1], 2), direction });
 
-  push(findIndex(text, [/(?:pose|postura)\s+(?:de\s+)?heroi/, /hero(?:ic)?\s+pose/, /pose\s+heroica/]), { type: 'heroPose' });
-  push(findIndex(text, [/(?:pose|postura)\s+fofa/, /cute\s+pose/]), { type: 'cutePose' });
-  push(findIndex(text, [/(?:pose|postura)\s+(?:natural|relaxada)/, /relaxed\s+pose/]), { type: 'relaxedPose' });
+  push(findIndex(text, [/(?:pose|pode|postura)\s+(?:de\s+)?heroi/, /hero(?:ic)?\s+pose/, /pose\s+heroica/]), { type: 'heroPose' });
+  push(findIndex(text, [/(?:pose|pode|postura)\s+fofa/, /cute\s+pose/]), { type: 'cutePose' });
+  push(findIndex(text, [/(?:pose|pode|postura)\s+(?:natural|relaxada)/, /relaxed\s+pose/]), { type: 'relaxedPose' });
   push(findIndex(text, [/\b(?:acenar|acene|acenando|wave|waving)\b/]), {
     type: 'wave',
     side: /(?:mao|braco)\s+esquerd|left\s+(?:hand|arm)/.test(text) ? 'left' : 'right',
@@ -349,7 +349,7 @@ class TextMotionService {
     try {
       this.emit({ phase: 'draft', progress: 0.12, message: 'Separando ações e direção do movimento…' });
       const draftText = await this.callChat([{ role: 'system', content: systemPrompt }, { role: 'user', content: userPrompt }], controller);
-      const draft = ensureActionCoverage(validateDraft(extractJson(draftText)), prompt);
+      const draft = validateDraft(ensureActionCoverage(extractJson(draftText), prompt));
       this.emit({ phase: 'draft-ready', progress: request.refine ? 0.58 : 0.92, message: 'Plano semântico criado.' });
       let result = draft;
       let refined = false;
@@ -362,7 +362,7 @@ class TextMotionService {
             { role: 'assistant', content: JSON.stringify(draft) },
             { role: 'user', content: REFINE_PROMPT },
           ], controller);
-          result = ensureActionCoverage(validateDraft(extractJson(refinedText)), prompt);
+          result = validateDraft(ensureActionCoverage(extractJson(refinedText), prompt));
           refined = true;
         } catch (error) {
           if (controller.signal.aborted) throw error;
