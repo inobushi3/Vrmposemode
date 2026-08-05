@@ -149,6 +149,15 @@ assert.ok(motionImporter.includes('new FBXLoader().parse'));
 assert.ok(motionImporter.includes('loader.parseAsync'));
 assert.ok(motionImporter.includes("format === 'pmp'"));
 assert.ok(motionImporter.includes('MAX_KEYFRAMES = 12000'));
+assert.ok(motionImporter.includes("targetMetaVersion?: '0' | '1'"));
+assert.ok(motionImporter.includes('ROOT_CONTROL_NAMES'));
+assert.ok(motionImporter.includes("'n_root'"));
+assert.ok(motionImporter.includes("'n_hara'"));
+assert.ok(motionImporter.includes('findRootMotionSource'));
+assert.ok(motionImporter.includes('rootMotionSource.node.getWorldPosition'));
+assert.ok(motionImporter.includes("targetMetaVersion === '0'"));
+assert.ok(motionImporter.includes("hips: ['hips', 'hip', 'pelvis', 'j_kosi']"));
+assert.ok(!motionImporter.includes("hips: ['hips', 'hip', 'pelvis', 'root'"));
 
 const papPackage = read('src/lib/papPackage.ts');
 assert.ok(papPackage.includes('parsePapBytes'));
@@ -162,6 +171,14 @@ assert.ok(motionUi.includes('bridge.convert'));
 assert.ok(motionUi.includes('Converter PAP para timeline'));
 assert.ok(motionUi.includes('Preparar conversor XAT'));
 assert.ok(motionUi.includes('extractPmpPap'));
+assert.ok(motionUi.includes('targetMetaVersion: modelInfo.metaVersion'));
+assert.ok(motionUi.includes('O app não está processando nada agora.'));
+assert.ok(motionUi.includes("['download', 'extract', 'convert'].includes"));
+assert.ok(motionUi.includes('separa o motion root do quadril anatômico'));
+
+const motionCss = read('src/motion-library-formats.css');
+assert.ok(motionCss.includes('.motion-pap-waiting'));
+assert.ok(motionCss.includes('.motion-pap-waiting.ready'));
 
 const electronMain = read('electron/main.cjs');
 const preload = read('electron/preload.cjs');
@@ -215,4 +232,4 @@ assert.ok(rendererMain.includes('<MmdStudio />'));
 assert.ok(rendererMain.includes('<PersonalPoseLibrary />'));
 assert.ok(rendererMain.includes("'./mmd-motion-package.css'"));
 
-console.log('RTMW3D, VRM axes, PAP/SKLB/XAT conversion, facial expressions, multi-format import and MMD validation completed.');
+console.log('RTMW3D, VRM axes, PAP/SKLB/XAT conversion, root motion extraction, facial expressions, multi-format import and MMD validation completed.');
