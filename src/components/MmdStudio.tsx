@@ -38,12 +38,20 @@ function displayName(file: File): string {
   return file.name.replace(/\\/g, '/').split('/').pop() ?? file.name;
 }
 
+function disposeMaterial(material: THREE.Material): void {
+  const record = material as unknown as Record<string, unknown>;
+  for (const value of Object.values(record)) {
+    if (value instanceof THREE.Texture) value.dispose();
+  }
+  material.dispose();
+}
+
 function disposeObject(root: THREE.Object3D): void {
   root.traverse((object) => {
     const mesh = object as THREE.Mesh;
     mesh.geometry?.dispose?.();
-    if (Array.isArray(mesh.material)) mesh.material.forEach((material) => material.dispose());
-    else mesh.material?.dispose?.();
+    if (Array.isArray(mesh.material)) mesh.material.forEach(disposeMaterial);
+    else if (mesh.material) disposeMaterial(mesh.material);
   });
 }
 
@@ -62,7 +70,7 @@ export default function MmdStudio(): JSX.Element | null {
   const [busy, setBusy] = useState(false);
   const [previewBusy, setPreviewBusy] = useState(false);
   const [error, setError] = useState('');
-  const [message, setMessage] = useState('Selecione um ZIP/PMX/PMD e um VMD/VPD. VMD facial pode ser usado sem modelo MMD.');
+  const [message, setMessage] = useState('Selecione um VMD para converter diretamente no VRM. PMX/PMD é opcional para o modo avançado.');
   const [previewInfo, setPreviewInfo] = useState<{ format: string; bones: number; files: number } | null>(null);
   const [result, setResult] = useState<RetargetedMmdMotion | null>(null);
 
@@ -88,7 +96,12 @@ export default function MmdStudio(): JSX.Element | null {
     motionFile && /\.vmd$/i.test(motionFile.name)
     && motionInfo && motionInfo.boneFrameCount === 0 && motionInfo.morphFrameCount > 0,
   );
-  const sourceModelRequired = Boolean(motionFile && (!facialOnly || /\.vpd$/i.test(motionFile.name)));
+  const bodyVmd = Boolean(
+    motionFile && /\.vmd$/i.test(motionFile.name)
+    && motionInfo && motionInfo.boneFrameCount > 0,
+  );
+  const directVmd = bodyVmd && modelFiles.length === 0;
+  const sourceModelRequired = Boolean(motionFile && /\.vpd$/i.test(motionFile.name));
 
   useEffect(() => {
     const toolbar = document.querySelector<HTMLElement>('.toolbar');
@@ -114,9 +127,11 @@ export default function MmdStudio(): JSX.Element | null {
       if (cancelled) return;
       setMotionInfo(info);
       if (info.boneFrameCount === 0 && info.morphFrameCount > 0) {
-        setMessage(`${displayName(motionFile)}: VMD facial/lip com ${info.morphFrameCount} frames de morph. PMX/PMD não é necessário.`);
+        setMessage(`${displayName(motionFile)}: VMD facial/lip com ${info.morphFrameCount} frames. Pode ser convertido diretamente.`);
+      } else if (info.boneFrameCount > 0) {
+        setMessage(`${displayName(motionFile)}: ${info.boneFrameCount} frames de ossos, ${info.duration.toFixed(2)}s. Pronto para VMD → VRM direto.`);
       } else {
-        setMessage(`${displayName(motionFile)}: ${info.boneFrameCount} frames de ossos e ${info.morphFrameCount} frames faciais.`);
+        setMessage(`${displayName(motionFile)} não contém frames corporais nem faciais utilizáveis.`);
       }
     }).catch((parseError) => {
       if (!cancelled) setError(readableError(parseError));
@@ -131,11 +146,11 @@ export default function MmdStudio(): JSX.Element | null {
     }
     const mount = canvasHostRef.current;
     let disposed = false;
-    let animationFrame = 0;
     let renderer: THREE.WebGLRenderer | null = null;
     let controls: OrbitControls | null = null;
     let loaded: LoadedMmdModel | null = null;
     let observer: ResizeObserver | null = null;
+    let renderQueued = false;
 
     const run = async (): Promise<void> => {
       setPreviewBusy(true);
@@ -153,7 +168,7 @@ export default function MmdStudio(): JSX.Element | null {
         scene.background = new THREE.Color('#11101a');
         const camera = new THREE.PerspectiveCamera(34, 1, 0.01, 100);
         renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' });
-        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+        renderer.setPixelRatio(Math.min(window.devicePixelRatio, 1.25));
         renderer.outputColorSpace = THREE.SRGBColorSpace;
         renderer.toneMapping = THREE.ACESFilmicToneMapping;
         renderer.toneMappingExposure = 1.05;
@@ -176,7 +191,7 @@ export default function MmdStudio(): JSX.Element | null {
 
         camera.position.set(size.y * 0.65, size.y * 0.58, size.y * 1.35);
         controls = new OrbitControls(camera, renderer.domElement);
-        controls.enableDamping = true;
+        controls.enableDamping = false;
         controls.target.set(0, size.y * 0.52, 0);
         controls.update();
 
@@ -189,6 +204,15 @@ export default function MmdStudio(): JSX.Element | null {
         scene.add(rim);
         scene.add(new THREE.GridHelper(5, 20, 0x5d5570, 0x2c2838));
 
+        const renderNow = (): void => {
+          renderQueued = false;
+          if (!disposed) renderer?.render(scene, camera);
+        };
+        const requestRender = (): void => {
+          if (renderQueued || disposed) return;
+          renderQueued = true;
+          requestAnimationFrame(renderNow);
+        };
         const resize = (): void => {
           if (!renderer) return;
           const width = Math.max(1, mount.clientWidth);
@@ -196,23 +220,20 @@ export default function MmdStudio(): JSX.Element | null {
           camera.aspect = width / height;
           camera.updateProjectionMatrix();
           renderer.setSize(width, height, false);
+          requestRender();
         };
         resize();
         observer = new ResizeObserver(resize);
         observer.observe(mount);
+        controls.addEventListener('change', requestRender);
+        requestRender();
 
-        const render = (): void => {
-          animationFrame = requestAnimationFrame(render);
-          controls?.update();
-          renderer?.render(scene, camera);
-        };
-        render();
         setPreviewInfo({
           format: loaded.modelFormat,
           bones: loaded.mesh.skeleton.bones.length,
           files: loaded.sourceFileCount,
         });
-        setMessage(`${loaded.modelFileName} carregado no visualizador MMD.`);
+        setMessage(`${loaded.modelFileName} carregado em preview econômico. O modelo não é renderizado continuamente.`);
       } catch (loadError) {
         if (!disposed) setError(readableError(loadError));
       } finally {
@@ -223,7 +244,6 @@ export default function MmdStudio(): JSX.Element | null {
 
     return () => {
       disposed = true;
-      cancelAnimationFrame(animationFrame);
       observer?.disconnect();
       controls?.dispose();
       renderer?.dispose();
@@ -246,6 +266,7 @@ export default function MmdStudio(): JSX.Element | null {
     setModelFiles(selected);
     setResult(null);
     setError('');
+    setMessage('Modelo MMD selecionado. O VMD usará o modo avançado com IK e grants desse modelo.');
   };
 
   const selectMotionFiles = async (files: FileList | null): Promise<void> => {
@@ -275,7 +296,7 @@ export default function MmdStudio(): JSX.Element | null {
       return;
     }
     if (sourceModelRequired && !modelFiles.length) {
-      setError('Este movimento contém corpo/IK. Selecione o PMX/PMD ou ZIP do modelo MMD de origem.');
+      setError('VPD é uma pose dependente do modelo MMD. Selecione o PMX/PMD usado para criar essa pose.');
       return;
     }
     if (!modelInfo || modelInfo.format !== 'VRM') {
@@ -287,7 +308,9 @@ export default function MmdStudio(): JSX.Element | null {
     setError('');
     setMessage(facialOnly
       ? 'Convertendo morphs MMD de rosto e lábios para expressões VRMA…'
-      : 'Executando o VMD no modelo MMD, resolvendo IK e convertendo para o humanoide VRM…');
+      : directVmd
+        ? 'Lendo curvas VMD, mapeando ossos padrão e aplicando diretamente no humanoide VRM…'
+        : 'Executando o VMD no PMX/PMD, resolvendo IK e convertendo para o humanoide VRM…');
     try {
       const converted = await retargetMmdMotion({
         sourceModelFiles: modelFiles,
@@ -300,6 +323,7 @@ export default function MmdStudio(): JSX.Element | null {
         rootScale,
         targetHeight: modelInfo.heightMeters ?? 1.65,
         targetMetaVersion: modelInfo.metaVersion === '0' ? '0' : '1',
+        targetRig: modelInfo.humanoidRig,
       });
       const offset = importMode === 'append' ? currentTime : 0;
       const positioned = converted.keyframes.map((frame) => ({
@@ -327,7 +351,7 @@ export default function MmdStudio(): JSX.Element | null {
   if (!toolbarHost) return null;
 
   const toolbarButton = createPortal(
-    <button className="secondary-button mmd-toolbar-button" onClick={() => setOpen(true)} title="Abrir PMX/PMD/ZIP e converter VMD/VPD/ZIP">
+    <button className="secondary-button mmd-toolbar-button" onClick={() => setOpen(true)} title="Converter VMD direto para VRM ou usar PMX/PMD no modo avançado">
       <Sparkles size={16} /> MMD
     </button>,
     toolbarHost,
@@ -344,7 +368,7 @@ export default function MmdStudio(): JSX.Element | null {
           <section className="mmd-studio" role="dialog" aria-modal="true" aria-label="Estúdio MMD">
             <header className="mmd-header">
               <span className="mmd-logo"><Sparkles size={20} /></span>
-              <div><strong>Estúdio MMD</strong><small>PMX/PMD/ZIP · VMD/VPD/ZIP · corpo e expressões</small></div>
+              <div><strong>Estúdio MMD</strong><small>VMD → VRM direto · PMX/PMD opcional · VPD/ZIP</small></div>
               <span className={`mmd-target ${modelInfo?.format === 'VRM' ? 'ready' : ''}`}>
                 {modelInfo?.format === 'VRM' ? `Destino: ${modelInfo.name}` : 'Abra um VRM para converter'}
               </span>
@@ -369,14 +393,14 @@ export default function MmdStudio(): JSX.Element | null {
                 <div className="mmd-preview">
                   <div ref={canvasHostRef} className="mmd-canvas-host" />
                   {!modelFiles.length && (
-                    <div className="mmd-preview-empty"><FileBox size={40} /><strong>{facialOnly ? 'Modelo MMD opcional' : 'Nenhum modelo MMD'}</strong><span>{facialOnly ? 'Esse VMD possui somente rosto/lábios e pode ser aplicado diretamente ao VRM.' : 'Selecione PMX/PMD com os recursos ou um ZIP completo.'}</span></div>
+                    <div className="mmd-preview-empty"><FileBox size={40} /><strong>{facialOnly ? 'Modelo MMD desnecessário' : bodyVmd ? 'Modo direto no VRM' : 'Modelo MMD opcional'}</strong><span>{facialOnly ? 'Esse VMD possui somente rosto/lábios.' : bodyVmd ? 'O VMD corporal será mapeado diretamente para os ossos humanoides do VRM.' : 'Carregue PMX/PMD apenas para VPD ou para usar IK/grants específicos do modelo.'}</span></div>
                   )}
                   {previewBusy && <div className="mmd-preview-loading"><LoaderCircle size={30} /><span>Carregando MMD…</span></div>}
                 </div>
                 <div className="mmd-preview-toolbar">
-                  <button onClick={() => modelInputRef.current?.click()} disabled={busy}><Upload size={14} /> Arquivos/ZIP</button>
+                  <button onClick={() => modelInputRef.current?.click()} disabled={busy}><Upload size={14} /> PMX/PMD avançado</button>
                   <button onClick={() => folderInputRef.current?.click()} disabled={busy}><FolderOpen size={14} /> Pasta completa</button>
-                  <span>{modelFiles.length ? `${fileSummary(modelFiles)} · ${formatSize(modelBytes)}` : 'PMX/PMD + texturas'}</span>
+                  <span>{modelFiles.length ? `${fileSummary(modelFiles)} · ${formatSize(modelBytes)}` : 'Opcional para VMD corporal'}</span>
                   {previewInfo && <b>{previewInfo.format} · {previewInfo.bones} ossos · {previewInfo.files} arquivos</b>}
                 </div>
               </main>
@@ -384,8 +408,8 @@ export default function MmdStudio(): JSX.Element | null {
               <aside className="mmd-controls">
                 <section className="mmd-card">
                   <div className="mmd-card-title"><FileBox size={15} /><span>Modelo de origem</span></div>
-                  <strong>{modelFiles.length ? fileSummary(modelFiles) : facialOnly ? 'Não necessário para este VMD' : 'Não selecionado'}</strong>
-                  <small>Movimento corporal usa o PMX/PMD para resolver ossos, IK e grants. VMD apenas facial/lip é convertido diretamente.</small>
+                  <strong>{modelFiles.length ? fileSummary(modelFiles) : directVmd ? 'VRM direto — PMX não necessário' : facialOnly ? 'Não necessário para este VMD' : 'Opcional para VMD · obrigatório para VPD'}</strong>
+                  <small>Sem PMX, o app lê os canais VMD e aplica no humanoide VRM. Com PMX, usa o modo avançado para IK e grants específicos daquele modelo.</small>
                 </section>
 
                 <section className="mmd-card">
@@ -401,7 +425,7 @@ export default function MmdStudio(): JSX.Element | null {
                   {motionInfo && (
                     <small>{motionInfo.boneFrameCount} frames de ossos · {motionInfo.morphFrameCount} frames faciais · {motionInfo.duration.toFixed(2)}s</small>
                   )}
-                  {!motionInfo && <small>ZIPs de movimento são abertos e os VMD/VPD internos aparecem para seleção.</small>}
+                  {!motionInfo && <small>ZIPs são abertos e os VMD/VPD internos aparecem para seleção.</small>}
                 </section>
 
                 <div className="mmd-settings-grid">
@@ -412,7 +436,11 @@ export default function MmdStudio(): JSX.Element | null {
                 </div>
 
                 <div className="mmd-note">
-                  VMD corporal é executado no PMX/PMD antes do retargeting. Morphs de rosto e lábios são associados às expressões disponíveis no VRM e também entram no VRMA exportado.
+                  {directVmd
+                    ? 'Modo direto: curvas Bézier, rotações, centro/groove, root motion e nomes de ossos MMD padrão são convertidos no próprio VRM. PMX não é carregado.'
+                    : modelFiles.length
+                      ? 'Modo avançado: o VMD é executado no PMX/PMD com IK e grants antes do retargeting.'
+                      : 'VMD corporal funciona diretamente no VRM. VPD continua precisando do modelo MMD de origem.'}
                 </div>
 
                 {result && (
@@ -434,7 +462,7 @@ export default function MmdStudio(): JSX.Element | null {
                 setMotionInfo(null);
                 setResult(null);
                 setError('');
-                setMessage('Seleção MMD limpa.');
+                setMessage('Seleção MMD limpa. VMD corporal pode ser convertido sem PMX.');
               }}><RotateCcw size={14} /> Limpar</button>
               <button className="mmd-close" disabled={busy} onClick={() => setOpen(false)}>Fechar</button>
               <button className="mmd-convert" disabled={busy || !motionFile || (sourceModelRequired && !modelFiles.length) || modelInfo?.format !== 'VRM'} onClick={() => void convert()}>
