@@ -1,9 +1,11 @@
 const { app, BrowserWindow, ipcMain, dialog } = require('electron');
 const path = require('node:path');
 const { Rtmw3dService } = require('./rtmw3d.cjs');
+const { PapConverterService } = require('./papConverter.cjs');
 
 let mainWindow;
 let rtmw3dService;
+let papConverterService;
 
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -60,10 +62,27 @@ ipcMain.handle('rtmw3d:infer', async (_event, request) => {
   return rtmw3dService.infer(request);
 });
 
+ipcMain.handle('pap:status', async () => {
+  if (!papConverterService) throw new Error('O conversor PAP ainda não foi inicializado.');
+  return papConverterService.status();
+});
+ipcMain.handle('pap:prepare', async () => {
+  if (!papConverterService) throw new Error('O conversor PAP ainda não foi inicializado.');
+  return papConverterService.prepare();
+});
+ipcMain.handle('pap:convert', async (_event, request) => {
+  if (!papConverterService) throw new Error('O conversor PAP ainda não foi inicializado.');
+  return papConverterService.convert(request);
+});
+
 app.whenReady().then(() => {
   rtmw3dService = new Rtmw3dService({
     app,
     onProgress: (payload) => mainWindow?.webContents.send('rtmw3d:progress', payload),
+  });
+  papConverterService = new PapConverterService({
+    app,
+    onProgress: (payload) => mainWindow?.webContents.send('pap:progress', payload),
   });
   createWindow();
 });
