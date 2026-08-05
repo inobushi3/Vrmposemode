@@ -1,5 +1,10 @@
 import * as THREE from 'three';
 import type { Keyframe, PoseSnapshot, QuatTuple, Vec3Tuple } from '../types';
+import {
+  compileSemanticActions,
+  type ProceduralMotionFrame,
+  type SemanticMotionActionType,
+} from './proceduralMotion';
 
 export const TEXT_MOTION_BONES = [
   'hips', 'spine', 'chest', 'upperChest', 'neck', 'head',
@@ -28,6 +33,7 @@ export interface RawTextMotionSpec {
   duration?: unknown;
   loop?: unknown;
   summary?: unknown;
+  actions?: unknown;
   frames?: unknown;
 }
 
@@ -38,6 +44,7 @@ export interface CompiledTextMotion {
   loop: boolean;
   keyframes: Keyframe[];
   boneCount: number;
+  actionsUsed: SemanticMotionActionType[];
   warnings: string[];
 }
 
@@ -59,10 +66,10 @@ const ROTATION_LIMITS: Partial<Record<TextMotionBoneName, AxisLimits>> = {
   head: [60, 80, 60],
   leftShoulder: [35, 45, 45],
   rightShoulder: [35, 45, 45],
-  leftUpperArm: [130, 130, 130],
-  rightUpperArm: [130, 130, 130],
-  leftLowerArm: [20, 145, 145],
-  rightLowerArm: [20, 145, 145],
+  leftUpperArm: [150, 130, 150],
+  rightUpperArm: [150, 130, 150],
+  leftLowerArm: [25, 145, 150],
+  rightLowerArm: [25, 145, 150],
   leftHand: [65, 65, 65],
   rightHand: [65, 65, 65],
   leftUpperLeg: [135, 70, 80],
@@ -78,7 +85,7 @@ const ROTATION_LIMITS: Partial<Record<TextMotionBoneName, AxisLimits>> = {
 const DEFAULT_LIMIT: AxisLimits = [90, 90, 90];
 const DEFAULT_DURATION = 4;
 const MAX_DURATION = 300;
-const MAX_FRAMES = 480;
+const MAX_FRAMES = 720;
 const DEG_TO_RAD = Math.PI / 180;
 
 function finiteNumber(value: unknown, fallback = 0): number {
@@ -130,7 +137,7 @@ function clampRotation(
     result[2] = clamp(raw[2], -15, 15);
   }
   if (bone === 'leftLowerArm' || bone === 'rightLowerArm') {
-    result[0] = clamp(raw[0], -20, 20);
+    result[0] = clamp(raw[0], -25, 25);
   }
 
   if (result.some((value, index) => Math.abs(value - raw[index]) > 0.001)) {
@@ -140,8 +147,13 @@ function clampRotation(
 }
 
 function baseRotation(bone: TextMotionBoneName): Vec3Tuple {
-  if (bone === 'leftUpperArm') return [0, 0, -65];
-  if (bone === 'rightUpperArm') return [0, 0, 65];
+  // No humanoide normalizado VRM, a pose de repouso é T-pose. O braço esquerdo
+  // aponta para +X e desce com Z negativo; o direito aponta para -X e desce
+  // com Z positivo.
+  if (bone === 'leftUpperArm') return [0, 0, -68];
+  if (bone === 'rightUpperArm') return [0, 0, 68];
+  if (bone === 'leftLowerArm') return [0, 0, -8];
+  if (bone === 'rightLowerArm') return [0, 0, 8];
   return [0, 0, 0];
 }
 
@@ -168,7 +180,7 @@ function sanitizeFrames(
   fps: number,
   warnings: string[],
 ): SanitizedFrame[] {
-  if (!Array.isArray(rawFrames)) throw new Error('O modelo não retornou a lista frames.');
+  if (!Array.isArray(rawFrames)) return [];
   const durationScale = targetDuration / Math.max(0.001, sourceDuration);
   const byFrame = new Map<number, SanitizedFrame>();
 
@@ -200,9 +212,9 @@ function sanitizeFrames(
         const position = tuple3(rawTransform.p);
         if (position) {
           transform.p = [
-            clamp(position[0], -2, 2),
+            clamp(position[0], -12, 12),
             clamp(position[1], -1.5, 2.5),
-            clamp(position[2], -2, 2),
+            clamp(position[2], -12, 12),
           ];
         }
       }
@@ -223,6 +235,35 @@ function sanitizeFrames(
   }
 
   return [...byFrame.values()].sort((a, b) => a.t - b.t);
+}
+
+function proceduralToRaw(frames: ProceduralMotionFrame[]): RawTextMotionFrame[] {
+  return frames.map((frame) => ({
+    t: frame.t,
+    easing: frame.easing,
+    bones: frame.bones,
+  }));
+}
+
+function mergeSanitizedFrames(...groups: SanitizedFrame[][]): SanitizedFrame[] {
+  const byTime = new Map<number, SanitizedFrame>();
+  for (const group of groups) {
+    for (const frame of group) {
+      const key = Math.round(frame.t * 100000);
+      const existing = byTime.get(key);
+      if (existing) {
+        Object.assign(existing.changes, frame.changes);
+        existing.easing = frame.easing;
+      } else {
+        byTime.set(key, {
+          t: frame.t,
+          easing: frame.easing,
+          changes: structuredClone(frame.changes),
+        });
+      }
+    }
+  }
+  return [...byTime.values()].sort((a, b) => a.t - b.t);
 }
 
 export function compileTextMotion(
@@ -247,8 +288,28 @@ export function compileTextMotion(
   );
   if (!allowedBones.size) throw new Error('O modelo VRM aberto não possui ossos humanoides compatíveis.');
 
-  const frames = sanitizeFrames(raw.frames, allowedBones, sourceDuration, targetDuration, fps, warnings);
-  if (!frames.length) throw new Error('Nenhum keyframe válido permaneceu após a validação.');
+  const procedural = compileSemanticActions(raw.actions, targetDuration, fps);
+  warnings.push(...procedural.warnings);
+  const semanticFrames = sanitizeFrames(
+    proceduralToRaw(procedural.frames),
+    allowedBones,
+    targetDuration,
+    targetDuration,
+    fps,
+    warnings,
+  );
+  const customFrames = sanitizeFrames(
+    raw.frames,
+    allowedBones,
+    sourceDuration,
+    targetDuration,
+    fps,
+    warnings,
+  );
+  const frames = mergeSanitizedFrames(semanticFrames, customFrames);
+  if (!frames.length) {
+    throw new Error('O modelo não produziu ações semânticas nem keyframes válidos.');
+  }
 
   const usedBones = new Set<TextMotionBoneName>();
   for (const frame of frames) {
@@ -308,7 +369,7 @@ export function compileTextMotion(
     };
   }
 
-  const uniqueWarnings = [...new Set(warnings)].slice(0, 12);
+  const uniqueWarnings = [...new Set(warnings)].slice(0, 16);
   return {
     name: typeof raw.name === 'string' && raw.name.trim() ? raw.name.trim().slice(0, 80) : 'Movimento por texto',
     summary: typeof raw.summary === 'string' ? raw.summary.trim().slice(0, 240) : '',
@@ -316,6 +377,7 @@ export function compileTextMotion(
     loop,
     keyframes: compiled,
     boneCount: usedBones.size,
+    actionsUsed: procedural.actionsUsed,
     warnings: uniqueWarnings,
   };
 }
