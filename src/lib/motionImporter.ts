@@ -37,6 +37,7 @@ export interface MotionImportOptions {
   rootScale: number;
   clipIndex: number;
   targetHeight?: number;
+  targetMetaVersion?: '0' | '1';
 }
 
 export interface ImportedMotion {
@@ -64,12 +65,26 @@ interface SourceBoneRest {
   restWorldPosition: THREE.Vector3;
 }
 
+interface RootMotionSource {
+  node: THREE.Object3D;
+  restWorldPosition: THREE.Vector3;
+  trackName: string;
+  amplitude: number;
+}
+
+interface ParsedTrackName {
+  nodeName?: string;
+  objectName?: string;
+  objectIndex?: string | number;
+  propertyName?: string;
+}
+
 const MAX_KEYFRAMES = 12000;
 const DEFAULT_TARGET_HEIGHT = 1.65;
 const DIRECT_PACKAGE_EXTENSIONS = new Set(['vrma', 'bvh', 'fbx', 'glb', 'gltf']);
 
 const ALIASES: Record<HumanBoneName, string[]> = {
-  hips: ['hips', 'hip', 'pelvis', 'root', 'rootmotion', 'center', 'n_hara', 'j_kosi'],
+  hips: ['hips', 'hip', 'pelvis', 'j_kosi'],
   spine: ['spine', 'spine0', 'spine01', 'abdomen', 'lowerbody', 'j_sebo_a'],
   chest: ['chest', 'spine1', 'spine02', 'upperbody', 'upperbody1', 'j_sebo_b'],
   upperChest: ['upperchest', 'spine2', 'spine03', 'chest2', 'upperbody2', 'j_sebo_c'],
@@ -134,6 +149,16 @@ function normalizeName(value: string): string {
     .replace(/[^a-z0-9_]+/g, '')
     .replace(/_/g, '');
 }
+
+const ROOT_CONTROL_NAMES = [
+  'n_root',
+  'n_hara',
+  'rootmotion',
+  'root',
+  'master',
+  'center',
+  'armature',
+].map(normalizeName);
 
 const ALIAS_LOOKUP = new Map<string, HumanBoneName>();
 for (const bone of HUMAN_BONES) {
@@ -273,23 +298,141 @@ function collectNamedNodes(root: THREE.Object3D): THREE.Object3D[] {
 }
 
 function mapSourceBones(root: THREE.Object3D, availableBones?: Set<string>): Map<HumanBoneName, THREE.Object3D> {
+  const nodes = collectNamedNodes(root);
   const result = new Map<HumanBoneName, THREE.Object3D>();
-  for (const node of collectNamedNodes(root)) {
+  for (const node of nodes) {
     const bone = guessHumanBone(node.name);
     if (!bone || result.has(bone) || (availableBones && !availableBones.has(bone))) continue;
     result.set(bone, node);
   }
+
+  if (!result.has('hips') && (!availableBones || availableBones.has('hips'))) {
+    for (const fallbackName of ['n_hara', 'rootmotion', 'root', 'center']) {
+      const wanted = normalizeName(fallbackName);
+      const fallback = nodes.find((node) => normalizeName(node.name) === wanted);
+      if (fallback) {
+        result.set('hips', fallback);
+        break;
+      }
+    }
+  }
   return result;
 }
 
-function clipHasRootMotion(clip: THREE.AnimationClip, mapped: Map<HumanBoneName, THREE.Object3D>): boolean {
-  const hips = mapped.get('hips');
-  if (!hips) return false;
-  const names = new Set([hips.name, hips.uuid].map(normalizeName));
-  return clip.tracks.some((track) => {
-    const parsed = THREE.PropertyBinding.parseTrackName(track.name);
-    return parsed.propertyName === 'position' && names.has(normalizeName(parsed.nodeName ?? ''));
-  });
+function parseTrackName(track: THREE.KeyframeTrack): ParsedTrackName | null {
+  try {
+    return THREE.PropertyBinding.parseTrackName(track.name) as ParsedTrackName;
+  } catch {
+    return null;
+  }
+}
+
+function trackTargetName(track: THREE.KeyframeTrack): string {
+  const parsed = parseTrackName(track);
+  if (!parsed) return '';
+  if (parsed.objectName === 'bones' && parsed.objectIndex != null) return String(parsed.objectIndex);
+  return String(parsed.nodeName ?? parsed.objectIndex ?? '');
+}
+
+function trackTargetNode(root: THREE.Object3D, track: THREE.KeyframeTrack): THREE.Object3D | null {
+  const targetName = trackTargetName(track);
+  if (!targetName) return null;
+  const byUuid = root.getObjectByProperty('uuid', targetName);
+  if (byUuid) return byUuid;
+  const exact = root.getObjectByName(targetName);
+  if (exact) return exact;
+  const wanted = normalizeName(targetName);
+  return collectNamedNodes(root).find((node) => normalizeName(node.name) === wanted) ?? null;
+}
+
+function positionTrackAmplitude(track: THREE.KeyframeTrack): number {
+  const valueSize = track.getValueSize();
+  if (valueSize < 3 || track.values.length < valueSize) return 0;
+  const min = [Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY, Number.POSITIVE_INFINITY];
+  const max = [Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY, Number.NEGATIVE_INFINITY];
+  for (let index = 0; index + 2 < track.values.length; index += valueSize) {
+    for (let axis = 0; axis < 3; axis += 1) {
+      const value = Number(track.values[index + axis]);
+      if (!Number.isFinite(value)) continue;
+      min[axis] = Math.min(min[axis], value);
+      max[axis] = Math.max(max[axis], value);
+    }
+  }
+  if (min.some((value) => !Number.isFinite(value)) || max.some((value) => !Number.isFinite(value))) return 0;
+  return Math.hypot(max[0] - min[0], max[1] - min[1], max[2] - min[2]);
+}
+
+function nodeDepth(node: THREE.Object3D): number {
+  let depth = 0;
+  let current = node.parent;
+  while (current) {
+    depth += 1;
+    current = current.parent;
+  }
+  return depth;
+}
+
+function isAncestorOrSame(ancestor: THREE.Object3D, node: THREE.Object3D): boolean {
+  let current: THREE.Object3D | null = node;
+  while (current) {
+    if (current === ancestor) return true;
+    current = current.parent;
+  }
+  return false;
+}
+
+function rootControlPriority(name: string): number {
+  const normalized = normalizeName(name);
+  const index = ROOT_CONTROL_NAMES.indexOf(normalized);
+  if (index >= 0) return 170 - index * 12;
+  if (normalized.includes('root')) return 85;
+  if (normalized.includes('center') || normalized.includes('centre')) return 70;
+  return 0;
+}
+
+function findRootMotionSource(
+  root: THREE.Object3D,
+  clip: THREE.AnimationClip,
+  mapped: Map<HumanBoneName, THREE.Object3D>,
+): RootMotionSource | null {
+  const hips = mapped.get('hips') ?? null;
+  let best: { node: THREE.Object3D; trackName: string; amplitude: number; score: number } | null = null;
+
+  for (const track of clip.tracks) {
+    const parsed = parseTrackName(track);
+    if (parsed?.propertyName !== 'position') continue;
+    const amplitude = positionTrackAmplitude(track);
+    if (amplitude <= 0.00001) continue;
+    const node = trackTargetNode(root, track);
+    if (!node) continue;
+
+    const normalized = normalizeName(node.name);
+    let score = rootControlPriority(node.name);
+    score += Math.min(120, Math.log1p(amplitude * 10) * 35);
+    score += Math.max(0, 32 - nodeDepth(node) * 3);
+    if (hips && isAncestorOrSame(node, hips)) score += 100;
+    if (node === hips) score += 50;
+    if (/(left|right|hand|foot|toe|ankle|wrist|knee|elbow|shoulder|arm|leg)/.test(normalized)) score -= 220;
+    if (hips && !isAncestorOrSame(node, hips) && rootControlPriority(node.name) === 0) score -= 80;
+
+    if (!best || score > best.score) best = { node, trackName: track.name, amplitude, score };
+  }
+
+  if (!best) return null;
+  return {
+    node: best.node,
+    restWorldPosition: best.node.getWorldPosition(new THREE.Vector3()),
+    trackName: best.trackName,
+    amplitude: best.amplitude,
+  };
+}
+
+function clipHasRootMotion(
+  root: THREE.Object3D,
+  clip: THREE.AnimationClip,
+  mapped: Map<HumanBoneName, THREE.Object3D>,
+): boolean {
+  return findRootMotionSource(root, clip, mapped) != null;
 }
 
 function mappedSourceHeight(mapped: Map<HumanBoneName, THREE.Object3D>, root: THREE.Object3D): number {
@@ -338,13 +481,16 @@ function captureRest(mapped: Map<HumanBoneName, THREE.Object3D>): Map<HumanBoneN
   return rest;
 }
 
-function quaternionTuple(quaternion: THREE.Quaternion): QuatTuple {
+function quaternionTuple(quaternion: THREE.Quaternion, targetMetaVersion?: '0' | '1'): QuatTuple {
   const value = quaternion.clone().normalize();
+  if (targetMetaVersion === '0') value.set(-value.x, value.y, -value.z, value.w).normalize();
   return [value.x, value.y, value.z, value.w];
 }
 
-function vectorTuple(vector: THREE.Vector3): Vec3Tuple {
-  return [vector.x, vector.y, vector.z];
+function vectorTuple(vector: THREE.Vector3, targetMetaVersion?: '0' | '1'): Vec3Tuple {
+  return targetMetaVersion === '0'
+    ? [-vector.x, vector.y, -vector.z]
+    : [vector.x, vector.y, vector.z];
 }
 
 function parentWorldDelta(
@@ -380,7 +526,7 @@ function sampleStandardClip(
   const sourceHeight = mappedSourceHeight(mapped, source.root);
   const targetHeight = Math.max(0.5, Math.min(3, Number(options.targetHeight) || DEFAULT_TARGET_HEIGHT));
   const motionScale = (targetHeight / sourceHeight) * Math.max(0, Math.min(3, Number(options.rootScale) || 1));
-  const hipsRest = rest.get('hips')?.restWorldPosition.clone() ?? new THREE.Vector3();
+  const rootMotionSource = findRootMotionSource(source.root, clip, mapped);
 
   const mixer = new THREE.AnimationMixer(source.root);
   const action = mixer.clipAction(clip);
@@ -390,7 +536,7 @@ function sampleStandardClip(
 
   const frameCount = Math.max(1, Math.ceil(duration * effectiveFps));
   const keyframes: Keyframe[] = [];
-  const hasRootMotion = clipHasRootMotion(clip, mapped);
+  const hasRootMotion = rootMotionSource != null;
 
   for (let frame = 0; frame <= frameCount; frame += 1) {
     const time = frame === frameCount ? duration : frame / effectiveFps;
@@ -409,16 +555,15 @@ function sampleStandardClip(
     for (const [bone, worldDelta] of worldDeltas) {
       const parentDelta = parentWorldDelta(bone, worldDeltas);
       const localDelta = parentDelta.clone().invert().multiply(worldDelta).normalize();
-      pose[bone] = { rotation: quaternionTuple(localDelta) };
+      pose[bone] = { rotation: quaternionTuple(localDelta, options.targetMetaVersion) };
     }
 
-    const hips = rest.get('hips');
-    if (pose.hips && hips && options.rootMotion) {
-      const displacement = hips.node.getWorldPosition(new THREE.Vector3())
-        .sub(hipsRest)
+    if (pose.hips && rootMotionSource && options.rootMotion) {
+      const displacement = rootMotionSource.node.getWorldPosition(new THREE.Vector3())
+        .sub(rootMotionSource.restWorldPosition)
         .applyQuaternion(inverseBasis)
         .multiplyScalar(motionScale);
-      pose.hips.position = vectorTuple(displacement);
+      pose.hips.position = vectorTuple(displacement, options.targetMetaVersion);
     }
 
     keyframes.push({ id: crypto.randomUUID(), time, pose, easing: 'linear' });
@@ -428,8 +573,10 @@ function sampleStandardClip(
   mixer.stopAllAction();
   mixer.uncacheRoot(source.root);
 
-  if (!hasRootMotion) warnings.push('No explicit hips translation track was found; the motion will usually stay in place.');
+  if (!hasRootMotion) warnings.push('No animated root or hips translation track was found; the motion will stay in place.');
   if (hasRootMotion && !options.rootMotion) warnings.push('Root motion was removed by the import setting.');
+  if (rootMotionSource) warnings.push(`Root motion extracted from ${rootMotionSource.node.name || rootMotionSource.trackName}.`);
+  if (options.targetMetaVersion === '0') warnings.push('VRM 0 axis conversion was applied to rotations and root displacement.');
   if (mapped.size < 15) warnings.push(`Only ${mapped.size} humanoid bones were recognized. Check the source skeleton naming if the result is incomplete.`);
 
   return {
@@ -471,7 +618,7 @@ async function inspectStandard(
     clips,
     sourceBones: collectNamedNodes(source.root).length,
     mappedBones: mapped.size,
-    hasRootMotion: source.clips.some((clip) => clipHasRootMotion(clip, mapped)),
+    hasRootMotion: source.clips.some((clip) => clipHasRootMotion(source.root, clip, mapped)),
     warnings,
   };
 }
