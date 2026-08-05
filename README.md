@@ -5,6 +5,12 @@ Desktop editor for loading VRM avatars, importing humanoid motion, editing the r
 ## Current features
 
 - Load `.vrm`, `.glb` and `.gltf` avatar/model files
+- MMD source studio for:
+  - PMX models (`.pmx`)
+  - PMD models (`.pmd`)
+  - complete MMD model ZIP bundles with textures
+  - MMD motion (`.vmd`)
+  - MMD pose (`.vpd`)
 - Edit normalized VRM humanoid bones with visual handles and transform gizmos
 - Pose presets, timeline, playback, loop, FPS, duration and draggable keyframes
 - Undo and redo for timeline changes
@@ -15,8 +21,11 @@ Desktop editor for loading VRM avatars, importing humanoid motion, editing the r
   - Filmbox animation (`.fbx`)
   - animated GLB (`.glb`)
   - embedded animated glTF (`.gltf`)
+- MMD conversion through the original PMX/PMD skeleton:
+  - VMD is evaluated with MMD IK and grants before retargeting
+  - VPD is converted to a static VRM pose timeline
 - Clip selection for files containing multiple animations
-- Automatic humanoid bone mapping for common VRM, Mixamo, BVH, Rigify and FFXIV-style bone names
+- Automatic humanoid bone mapping for common VRM, Mixamo, BVH, Rigify, MMD and FFXIV-style bone names
 - Rest-pose delta retargeting instead of copying source local axes directly
 - Optional root motion, displacement scaling and 15/30/60 FPS sampling
 - Penumbra `.pmp` package inspection and embedded standard-motion extraction
@@ -35,7 +44,7 @@ npm install
 npm start
 ```
 
-## Recommended workflow
+## Standard motion workflow
 
 1. Open the target `.vrm` avatar.
 2. Open **Motions**.
@@ -45,7 +54,24 @@ npm start
 6. Correct any bone or keyframe manually.
 7. Export the edited result with **Export VRMA**.
 
-The original motion file stays in IndexedDB on the local computer. No motion or avatar file is uploaded to an external service.
+## MMD workflow
+
+1. Open the target `.vrm` avatar in the main editor.
+2. Click **MMD** in the toolbar.
+3. Load the source MMD model using one of these methods:
+   - select a complete ZIP containing PMX/PMD and textures;
+   - select PMX/PMD plus its companion files;
+   - select the complete model folder.
+4. Select a `.vmd` motion or `.vpd` pose.
+5. Choose FPS, root motion and timeline destination.
+6. Convert to the timeline.
+7. Edit the resulting VRM keyframes and export them as VRMA.
+
+The PMX/PMD model is used as the source skeleton. A VMD is not retargeted in isolation because its IK, grants and bone names depend on the MMD model it was authored for.
+
+MMD model files can be viewed in the studio, but PMX/PMD is not converted into a VRM avatar. VRMA export always requires a valid VRM target because VRMA stores humanoid animation, not a character mesh.
+
+The original motion and avatar files remain local. No MMD, VRM or animation file is uploaded to an external service.
 
 ## Retargeting
 
@@ -59,7 +85,9 @@ For BVH, FBX and animated glTF/GLB sources, the importer:
 6. normalizes root displacement by source body height;
 7. samples the motion into ordinary editor keyframes.
 
-This is more reliable than copying the source bone Euler angles because FBX, BVH, Mixamo and VRM rigs can use different local axes.
+For MMD, the app first runs VMD/VPD on the selected PMX/PMD model. IK and grant deformation are evaluated without hair or cloth physics. The resulting body transforms are then converted from the MMD rest pose into normalized VRM bone deltas.
+
+This is more reliable than copying source Euler angles because MMD, FBX, BVH, Mixamo and VRM rigs can all use different local axes and rest poses.
 
 VRMA files use the official `@pixiv/three-vrm-animation` loader. Absolute hips translation is converted to a displacement relative to the animation T-pose before it enters the editor.
 
@@ -71,8 +99,10 @@ Final Fantasy XIV `.pap` files contain proprietary Havok animation data and do n
 
 ## Limitations
 
-- “Every 3D format” is not a technically valid promise: many 3D files contain geometry only, some animation formats omit the skeleton, and proprietary formats require their original runtime or decoder.
-- A valid humanoid VRM must be open before applying and exporting motion.
+- A valid humanoid VRM must be open before applying and exporting any imported motion.
+- PMX/PMD textures are usually external. Use the model ZIP or complete folder when a standalone model file appears without textures.
+- VMD motions authored for a very different MMD skeleton can still require manual correction after retargeting.
+- MMD hair, clothing, rigid-body physics, camera, lighting and facial morph animation are not exported as VRMA body tracks.
 - A GLB/glTF file must contain skeletal animation clips; geometry-only files cannot become VRMA.
 - Prefer GLB over glTF when the glTF references external `.bin` or texture files.
 - Bone mapping can require manual correction when a source uses unusual or unnamed joints.
@@ -82,10 +112,11 @@ Final Fantasy XIV `.pap` files contain proprietary Havok animation data and do n
 ## Development order
 
 1. Multi-format motion library and VRMA conversion — implemented
-2. IK handles for hands, feet, head and hips
-3. Motion block sequencer and transition blending
-4. Optional external PAP/SKLB conversion bridge
-5. Additional formats only when a reliable decoder and the required skeleton metadata are available
+2. PMX/PMD source viewing and VMD/VPD conversion — implemented
+3. IK handles for hands, feet, head and hips
+4. Motion block sequencer and transition blending
+5. Optional external PAP/SKLB conversion bridge
+6. Additional formats only when a reliable decoder and the required skeleton metadata are available
 
 ## Keyboard shortcuts
 
@@ -99,7 +130,11 @@ Final Fantasy XIV `.pap` files contain proprietary Havok animation data and do n
 ## Main files
 
 - `src/components/Viewport.tsx`: Three.js scene, VRM loading and manual editing
-- `src/components/MotionLibraryStudio.tsx`: local motion library and conversion UI
+- `src/components/MotionLibraryStudio.tsx`: local standard-motion library and conversion UI
+- `src/components/MmdStudio.tsx`: MMD model preview and VMD/VPD conversion UI
+- `src/lib/mmdModelLoader.ts`: PMX/PMD, ZIP resources, VMD and VPD loading
+- `src/lib/mmdMotionRetargeter.ts`: MMD IK/grant evaluation and VRM keyframe conversion
+- `src/lib/mmdHumanoid.ts`: Japanese and English MMD-to-VRM bone aliases
 - `src/lib/motionImporter.ts`: BVH/FBX/GLB/glTF retargeting and PMP/PAP inspection
 - `src/lib/vrmaImporter.ts`: official VRMA loading and keyframe conversion
 - `src/lib/motionLibrary.ts`: IndexedDB persistence
