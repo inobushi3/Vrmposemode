@@ -1,115 +1,110 @@
 # VRM Pose Mode
 
-Editor desktop para carregar modelos **VRM**, importar e editar movimentos humanoides e exportar o resultado como **VRM Animation (`.vrma`)**.
+Desktop editor for loading VRM avatars, importing humanoid motion, editing the result as keyframes and exporting VRM Animation (`.vrma`).
 
-## Recursos atuais
+## Current features
 
-- Carregamento por botão ou arrastar e soltar: `.vrm`, `.glb` e `.gltf`
-- Mapeamento automático dos ossos humanoides de modelos VRM
-- Seleção visual dos ossos no viewport e lista organizada por grupos
-- Gizmos locais de rotação e translação do quadril
-- Inspector numérico de rotação e posição
-- Biblioteca de poses iniciais
-- Biblioteca local persistente de arquivos `.vrma`
-- Importação oficial `VRMC_vrm_animation` usando `@pixiv/three-vrm-animation`
-- Conversão de VRMA para keyframes comuns e totalmente editáveis
-- Root motion opcional, escala de deslocamento e amostragem em 15/30/60 FPS
-- Timeline com keyframes, reprodução, loop, FPS, duração, zoom e arraste de keyframes
-- Interpolação suave durante a edição
-- Desfazer e refazer alterações da timeline
-- Criação experimental de pose ou movimento por imagem, GIF e vídeo
-- Captura corporal RTMW3D-x local com ONNX Runtime e DirectML no Windows
-- Câmeras prontas: frente, costas, laterais, 3/4 e rosto
-- Grade, controles visuais e cor de fundo configuráveis
-- Captura de preview em PNG
-- Salvamento e abertura de projeto `.vrmpose.json`
-- Exportação binária VRMA 1.0 usando a extensão oficial `VRMC_vrm_animation`
-- Interface desktop sem instalador obrigatório
+- Load `.vrm`, `.glb` and `.gltf` avatar/model files
+- Edit normalized VRM humanoid bones with visual handles and transform gizmos
+- Pose presets, timeline, playback, loop, FPS, duration and draggable keyframes
+- Undo and redo for timeline changes
+- Persistent local motion library
+- Direct motion conversion from:
+  - VRM Animation (`.vrma`)
+  - BioVision Hierarchy (`.bvh`)
+  - Filmbox animation (`.fbx`)
+  - animated GLB (`.glb`)
+  - embedded animated glTF (`.gltf`)
+- Clip selection for files containing multiple animations
+- Automatic humanoid bone mapping for common VRM, Mixamo, BVH, Rigify and FFXIV-style bone names
+- Rest-pose delta retargeting instead of copying source local axes directly
+- Optional root motion, displacement scaling and 15/30/60 FPS sampling
+- Penumbra `.pmp` package inspection and embedded standard-motion extraction
+- Explicit Final Fantasy XIV `.pap` detection without unsafe skeleton guessing
+- Experimental image, GIF and video pose capture
+- Local RTMW3D-x inference through ONNX Runtime and DirectML on Windows
+- Binary VRMA 1.0 export using `VRMC_vrm_animation`
+- No installer required for development use
 
-## Como executar
+## Run
 
-Requisitos: Node.js 20 ou superior.
+Requires Node.js 20 or newer.
 
 ```bash
 npm install
 npm start
 ```
 
-O `npm start` inicia o Vite e abre a janela do Electron automaticamente.
+## Recommended workflow
 
-## Fluxo recomendado
+1. Open the target `.vrm` avatar.
+2. Open **Motions**.
+3. Import a VRMA, BVH, FBX, GLB or glTF animation.
+4. Select the animation clip when the source contains multiple clips.
+5. Use 30 FPS first, enable root motion when displacement is required and convert it to the timeline.
+6. Correct any bone or keyframe manually.
+7. Export the edited result with **Export VRMA**.
 
-1. Clique em **Abrir modelo** e selecione um `.vrm`.
-2. Clique em **Movimentos**.
-3. Use **Importar VRMA** e selecione um arquivo `.vrma`.
-4. O arquivo é validado e salvo na biblioteca local do aplicativo.
-5. Escolha 30 FPS, mantenha root motion quando desejar deslocamento e aplique na timeline.
-6. Ajuste qualquer osso ou keyframe manualmente.
-7. Exporte o resultado novamente como VRMA.
+The original motion file stays in IndexedDB on the local computer. No motion or avatar file is uploaded to an external service.
 
-A biblioteca usa IndexedDB e permanece somente neste computador. O arquivo VRMA não é enviado para serviços externos.
+## Retargeting
 
-## Como a importação funciona
+For BVH, FBX and animated glTF/GLB sources, the importer:
 
-O carregador oficial converte o arquivo em canais do humanoide normalizado VRM:
+1. recognizes source bones by aliases and hierarchy names;
+2. records the source skeleton rest pose;
+3. evaluates the original animation clip;
+4. calculates world-space rotation deltas from the source rest pose;
+5. converts those deltas to the normalized VRM humanoid hierarchy;
+6. normalizes root displacement by source body height;
+7. samples the motion into ordinary editor keyframes.
 
-- rotações são associadas pelos nomes oficiais dos ossos humanoides;
-- somente ossos disponíveis no modelo aberto são importados;
-- a posição absoluta do quadril do arquivo é convertida para deslocamento relativo à T-pose;
-- a animação é amostrada no FPS escolhido e transformada em keyframes do editor;
-- timelines muito grandes são limitadas automaticamente;
-- expressões faciais e look-at são informados, mas ainda não entram na timeline corporal.
+This is more reliable than copying the source bone Euler angles because FBX, BVH, Mixamo and VRM rigs can use different local axes.
 
-## Fluxo manual
+VRMA files use the official `@pixiv/three-vrm-animation` loader. Absolute hips translation is converted to a displacement relative to the animation T-pose before it enters the editor.
 
-1. Escolha um osso na lista ou clique nos pontos do esqueleto.
-2. Rotacione com o gizmo ou use o inspector numérico.
-3. Posicione a timeline e clique em **Keyframe**.
-4. Repita para criar ou corrigir o movimento.
-5. Use **Exportar VRMA**.
+## PMP and PAP
 
-## Direção do editor
+Penumbra `.pmp` files are ZIP packages. The app reads package metadata, lists embedded animations and directly imports supported VRMA/BVH/FBX/GLB/glTF files when present.
 
-A geração de animação por texto foi removida. O fluxo principal agora usa movimentos humanoides reais e previsíveis.
+Final Fantasy XIV `.pap` files contain proprietary Havok animation data and do not include enough skeleton information for safe standalone retargeting. Direct PAP conversion requires the matching `.sklb` skeleton plus a compatible PAP/Havok decoder such as an external XIV animation toolkit. The app reports this requirement instead of producing corrupted VRMA output.
 
-Ordem de desenvolvimento:
+## Limitations
 
-1. importação e biblioteca VRMA — implementada;
-2. controles IK para mãos, pés, cabeça e quadril;
-3. sequenciador de blocos e transições entre movimentos;
-4. importação BVH;
-5. importação FBX/Mixamo com mapeamento explícito;
-6. captura por imagem/vídeo mantida como ferramenta experimental.
+- A valid humanoid VRM must be open before applying and exporting motion.
+- A GLB/glTF file must contain skeletal animation clips; geometry-only files cannot become VRMA.
+- Prefer GLB over glTF when the glTF references external `.bin` or texture files.
+- Bone mapping can require manual correction when a source uses unusual or unnamed joints.
+- Facial expressions and look-at tracks from imported motion are not yet part of the body timeline.
+- Image/video reconstruction remains experimental because monocular depth and retargeting are ambiguous.
 
-## Observações
+## Development order
 
-- A aplicação e a exportação `.vrma` exigem um modelo VRM com humanoide válido carregado.
-- Arquivos GLB/GLTF podem ser visualizados e manipulados, mas não possuem necessariamente o mapeamento humanoide necessário.
-- O projeto JSON salva a animação e as configurações, mas não incorpora o arquivo do modelo por questões de tamanho e licença.
-- Para `.gltf` com texturas externas, prefira converter para `.glb` ou `.vrm`, pois o seletor abre um único arquivo.
-- A captura por imagem e vídeo permanece experimental; resultados 2D/3D não garantem retargeting perfeito em todos os avatares.
+1. Multi-format motion library and VRMA conversion — implemented
+2. IK handles for hands, feet, head and hips
+3. Motion block sequencer and transition blending
+4. Optional external PAP/SKLB conversion bridge
+5. Additional proprietary formats only when a reliable decoder and skeleton metadata are available
 
-## Atalhos
+## Keyboard shortcuts
 
-- `Espaço`: reproduzir/pausar
-- `R`: gizmo de rotação
-- `G`: mover o quadril
-- `K`: adicionar/atualizar keyframe
-- `Ctrl+Z`: desfazer
-- `Ctrl+Y` ou `Ctrl+Shift+Z`: refazer
+- `Space`: play/pause
+- `R`: rotation gizmo
+- `G`: move hips
+- `K`: add/update keyframe
+- `Ctrl+Z`: undo
+- `Ctrl+Y` or `Ctrl+Shift+Z`: redo
 
-## Estrutura
+## Main files
 
-- `electron/`: janela desktop e serviços nativos do RTMW3D
-- `src/components/Viewport.tsx`: cena Three.js, carregamento VRM e manipulação
-- `src/components/MotionLibraryStudio.tsx`: biblioteca local e aplicação dos movimentos
-- `src/lib/vrmaImporter.ts`: carregamento oficial e conversão em keyframes
-- `src/lib/motionLibrary.ts`: persistência dos arquivos em IndexedDB
-- `src/lib/poseRetargeter.ts`: adaptação experimental de pose capturada para VRM
-- `src/lib/vrmaExporter.ts`: gerador GLB/VRMA 1.0
-- `src/store.ts`: estado do editor e histórico
-- `src/App.tsx`: interface, inspector e timeline
+- `src/components/Viewport.tsx`: Three.js scene, VRM loading and manual editing
+- `src/components/MotionLibraryStudio.tsx`: local motion library and conversion UI
+- `src/lib/motionImporter.ts`: BVH/FBX/GLB/glTF retargeting and PMP/PAP inspection
+- `src/lib/vrmaImporter.ts`: official VRMA loading and keyframe conversion
+- `src/lib/motionLibrary.ts`: IndexedDB persistence
+- `src/lib/vrmaExporter.ts`: VRMA 1.0 exporter
+- `src/store.ts`: editor state and history
 
-## Licença
+## License
 
 MIT
