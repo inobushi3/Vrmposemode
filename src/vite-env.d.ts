@@ -1,67 +1,67 @@
 /// <reference types="vite/client" />
 
-interface Rtmw3dKeypoint {
-  x: number;
-  y: number;
-  z: number;
-  score: number;
-}
-
-interface Rtmw3dStatus {
-  installed: boolean;
-  ready: boolean;
-  preparing: boolean;
-  provider: string | null;
-  modelPath: string | null;
-  inputSize: [number, number];
-  platform: string;
-  gpuAvailable: boolean;
-}
-
-interface Rtmw3dProgress {
-  phase: 'download' | 'load' | 'ready';
-  progress: number;
-  message: string;
-  received?: number;
-  total?: number;
-}
-
-interface Rtmw3dInferenceResult {
-  keypoints: Rtmw3dKeypoint[];
-  provider: string;
-  elapsedMs: number;
-  inputSize: [number, number];
-}
-
-interface PapConverterStatus {
-  platform: string;
-  supported: boolean;
-  installed: boolean;
-  preparing: boolean;
-  executablePath: string | null;
-  downloadUrl: string;
-}
-
-interface PapConverterProgress {
-  phase: 'download' | 'extract' | 'ready' | 'convert' | 'done';
-  progress: number;
-  message: string;
-  received?: number;
-  total?: number;
-}
-
-interface PapConversionResult {
-  fbx: Uint8Array;
-  fileName: string;
-  animationName: string;
-  animationIndex: number;
-  animationCount: number;
-  papSkeletonId: number;
-  sklbSkeletonId: number;
-  warning: string | null;
-}
-
 declare global {
+  interface Rtmw3dKeypoint {
+    x: number;
+    y: number;
+    z: number;
+    score: number;
+  }
+
+  interface Rtmw3dStatus {
+    installed: boolean;
+    ready: boolean;
+    preparing: boolean;
+    provider: string | null;
+    modelPath: string | null;
+    inputSize: [number, number];
+    platform: string;
+    gpuAvailable: boolean;
+  }
+
+  interface Rtmw3dProgress {
+    phase: 'download' | 'load' | 'ready';
+    progress: number;
+    message: string;
+    received?: number;
+    total?: number;
+  }
+
+  interface Rtmw3dInferenceResult {
+    keypoints: Rtmw3dKeypoint[];
+    provider: string;
+    elapsedMs: number;
+    inputSize: [number, number];
+  }
+
+  interface PapConverterStatus {
+    platform: string;
+    supported: boolean;
+    installed: boolean;
+    preparing: boolean;
+    executablePath: string | null;
+    downloadUrl: string;
+  }
+
+  interface PapConverterProgress {
+    phase: 'download' | 'extract' | 'ready' | 'convert' | 'done';
+    progress: number;
+    message: string;
+    received?: number;
+    total?: number;
+  }
+
+  interface PapConversionResult {
+    fbx: Uint8Array;
+    fileName: string;
+    animationName: string;
+    animationIndex: number;
+    animationCount: number;
+    papSkeletonId: number;
+    sklbSkeletonId: number;
+    warning: string | null;
+  }
+
   interface Window {
     desktop?: {
       minimize: () => void;
