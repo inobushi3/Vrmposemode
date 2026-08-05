@@ -7,6 +7,10 @@ interface TrackSampler {
   evaluate: (time: number) => ArrayLike<number>;
 }
 
+interface InterpolatableTrack extends THREE.KeyframeTrack {
+  createInterpolant: (result: Float32Array) => TrackSampler;
+}
+
 export interface VrmaImportOptions {
   availableBones: string[];
   sampleFps: number;
@@ -33,7 +37,7 @@ function safeName(fileName: string): string {
 
 function createSampler(track: THREE.KeyframeTrack): TrackSampler {
   const buffer = new Float32Array(track.getValueSize());
-  return track.createInterpolant(buffer) as unknown as TrackSampler;
+  return (track as InterpolatableTrack).createInterpolant(buffer);
 }
 
 function quaternionTuple(value: ArrayLike<number>): QuatTuple {
