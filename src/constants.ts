@@ -62,11 +62,9 @@ export function boneLabel(name: string): string {
     .replace(/^./, (letter) => letter.toUpperCase());
 }
 
+// As poses antigas eram ângulos Euler fixos e produziam resultados diferentes
+// entre avatares. Só a T-pose neutra permanece como ação segura. Poses reais
+// agora são snapshots normalizados salvos pela biblioteca pessoal.
 export const POSE_PRESETS = [
-  { id: 'tpose', name: 'T-Pose', description: 'Postura neutra de referência' },
-  { id: 'relaxed', name: 'Relaxada', description: 'Braços soltos e postura natural' },
-  { id: 'wave', name: 'Acenando', description: 'Mão direita levantada' },
-  { id: 'hero', name: 'Heroica', description: 'Postura firme e confiante' },
-  { id: 'cute', name: 'Fofa', description: 'Mãos próximas ao rosto' },
-  { id: 'sit', name: 'Sentada', description: 'Base para pose sentada' },
+  { id: 'tpose', name: 'T-Pose', description: 'Reset neutro do humanoide VRM' },
 ] as const;
