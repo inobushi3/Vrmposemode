@@ -303,8 +303,6 @@ export function compileTextMotion(
     fps,
     warnings,
   );
-  // Frames livres do LLM são aceitos como detalhes, mas as ações semânticas
-  // determinísticas sempre vencem em colisões de tempo/osso.
   const frames = mergeSanitizedFrames(customFrames, semanticFrames);
   if (!frames.length) {
     throw new Error('O modelo não produziu ações semânticas nem keyframes válidos.');
@@ -339,9 +337,14 @@ export function compileTextMotion(
   let firstPose: PoseSnapshot | null = null;
   for (const frame of frames) {
     for (const [bone, transform] of Object.entries(frame.changes) as Array<[TextMotionBoneName, WorkingTransform]>) {
+      const previousTransform = state.get(bone);
       state.set(bone, {
         r: cloneTuple(transform.r),
-        ...(transform.p ? { p: cloneTuple(transform.p) } : {}),
+        ...(transform.p
+          ? { p: cloneTuple(transform.p) }
+          : previousTransform?.p
+            ? { p: cloneTuple(previousTransform.p) }
+            : {}),
       });
     }
     const pose: PoseSnapshot = {};
