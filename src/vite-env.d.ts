@@ -33,37 +33,6 @@ interface Rtmw3dInferenceResult {
   inputSize: [number, number];
 }
 
-interface TextMotionSettings {
-  provider: string;
-  endpoint: string;
-  model: string;
-  temperature: number;
-  hasApiKey: boolean;
-  apiKeyCanBeStored: boolean;
-}
-
-interface TextMotionProgress {
-  phase: 'draft' | 'draft-ready' | 'refine' | 'done';
-  progress: number;
-  message: string;
-}
-
-interface TextMotionGenerationRequest {
-  prompt: string;
-  duration: number | null;
-  loop: boolean | null;
-  style: string;
-  intensity: number;
-  refine: boolean;
-  fps: number;
-  availableBones: string[];
-}
-
-interface TextMotionGenerationResult {
-  spec: unknown;
-  refined: boolean;
-}
-
 declare global {
   interface Window {
     desktop?: {
@@ -75,21 +44,6 @@ declare global {
         prepare: () => Promise<Rtmw3dStatus>;
         infer: (request: { rgba: Uint8Array }) => Promise<Rtmw3dInferenceResult>;
         onProgress: (callback: (progress: Rtmw3dProgress) => void) => () => void;
-      };
-      textMotion: {
-        getSettings: () => Promise<TextMotionSettings>;
-        saveSettings: (request: {
-          provider: string;
-          endpoint: string;
-          model: string;
-          temperature: number;
-          apiKey?: string;
-          clearApiKey?: boolean;
-        }) => Promise<TextMotionSettings>;
-        testConnection: () => Promise<{ ok: boolean; models: string[] }>;
-        generate: (request: TextMotionGenerationRequest) => Promise<TextMotionGenerationResult>;
-        cancel: () => void;
-        onProgress: (callback: (progress: TextMotionProgress) => void) => () => void;
       };
     };
   }
