@@ -147,9 +147,6 @@ function clampRotation(
 }
 
 function baseRotation(bone: TextMotionBoneName): Vec3Tuple {
-  // No humanoide normalizado VRM, a pose de repouso é T-pose. O braço esquerdo
-  // aponta para +X e desce com Z negativo; o direito aponta para -X e desce
-  // com Z positivo.
   if (bone === 'leftUpperArm') return [0, 0, -68];
   if (bone === 'rightUpperArm') return [0, 0, 68];
   if (bone === 'leftLowerArm') return [0, 0, -8];
@@ -306,7 +303,9 @@ export function compileTextMotion(
     fps,
     warnings,
   );
-  const frames = mergeSanitizedFrames(semanticFrames, customFrames);
+  // Frames livres do LLM são aceitos como detalhes, mas as ações semânticas
+  // determinísticas sempre vencem em colisões de tempo/osso.
+  const frames = mergeSanitizedFrames(customFrames, semanticFrames);
   if (!frames.length) {
     throw new Error('O modelo não produziu ações semânticas nem keyframes válidos.');
   }
