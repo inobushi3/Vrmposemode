@@ -18,11 +18,17 @@ Desktop editor for loading VRM avatars, importing humanoid and facial motion, ed
   - download the official XAT runtime once and reuse it offline
   - convert Havok animation to a temporary FBX and retarget it to VRM keyframes
 - MMD Studio:
+  - convert standard body VMD directly to the opened VRM without PMX/PMD
+  - parse body positions, rotations, frame duration and MMD cubic Bézier interpolation
+  - map standard Japanese/English MMD bone names to normalized VRM humanoid bones
+  - preserve center/groove/master root motion
+  - resolve common leg IK channels with target VRM proportions when rig data is available
+  - use PMX/PMD only as an optional advanced source for model-specific IK and grants
   - open PMX/PMD models from files, folders or complete ZIP bundles
+  - render the PMX/PMD preview only when loading, resizing or moving the camera
   - resolve local textures, sphere maps and toon resources
   - open VMD/VPD directly or from ZIP motion packs
   - choose among multiple VMD/VPD files found inside a package
-  - execute body VMD on its PMX/PMD source with MMD IK and grants
   - convert facial/lip-only VMD directly without requiring a PMX/PMD model
   - read common MMD Japanese morph names and VRMLiveViewer `VMDMorph` mapping JSON files
   - convert body and expression channels into ordinary editor keyframes
@@ -60,17 +66,29 @@ The XAT bridge is Windows-only and requires the Microsoft Visual C++ Redistribut
 
 ## MMD workflow
 
-### Body motion
+### Direct VMD to VRM
+
+For normal body VMD files, PMX/PMD is no longer required:
 
 1. Open the target VRM.
 2. Open **MMD**.
-3. Select the PMX/PMD source model, its folder or a complete model ZIP.
-4. Select a VMD/VPD file or a motion ZIP.
-5. Choose the internal motion when the ZIP contains multiple files.
+3. Select the VMD or a ZIP containing VMD files.
+4. Leave the source PMX/PMD empty.
+5. Start with 30 FPS and keep root motion enabled when the motion moves around the scene.
 6. Convert to the timeline.
 7. Correct keyframes and export VRMA.
 
-Body VMD needs a PMX/PMD source because the source model defines the bone names, hierarchy, IK and grants. The app evaluates that system before retargeting to the normalized VRM humanoid.
+The direct converter reads the original VMD body frames, uses MMD cubic Bézier timing, converts the MMD coordinate system, maps standard bone names, combines center/groove/master motion and writes normalized VRM keyframes.
+
+### Advanced PMX/PMD mode
+
+Load a PMX/PMD model only when the motion depends heavily on custom bones, grants or IK chains specific to that model. In this mode the app evaluates the VMD on the source MMD model before retargeting.
+
+The PMX/PMD preview keeps full materials and textures but no longer runs a continuous render loop. It redraws only on load, resize or camera interaction, with capped preview pixel density to reduce GPU and memory pressure without modifying the original model file.
+
+### VPD poses
+
+VPD remains dependent on its source PMX/PMD because the pose file references model-specific bone names and does not provide a complete source rig.
 
 ### Facial and lip motion
 
@@ -103,6 +121,8 @@ VRMA files use the official `@pixiv/three-vrm-animation` loader, including VRM0 
 ## Limitations
 
 - A valid humanoid VRM must be open before applying and exporting motion.
+- Direct VMD conversion is intended for standard MMD body channels. Unusual custom bones can still require the matching PMX/PMD advanced mode.
+- Leg IK accuracy depends on the names present in the VMD and on target VRM rig information.
 - PAP conversion requires the matching SKLB; using a skeleton from another race or family can corrupt the result.
 - PMX/PMD models are source/preview models; VRMA contains animation and does not convert the MMD mesh into a VRM avatar.
 - Facial conversion depends on expressions that actually exist in the target VRM.
