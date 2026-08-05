@@ -54,10 +54,12 @@ assert.equal(packageJson.dependencies.fflate, '0.8.2', 'PMP inspection requires 
 
 const requiredFiles = [
   'src/lib/vrmaImporter.ts',
+  'src/lib/vrmaExporter.ts',
   'src/lib/motionImporter.ts',
   'src/lib/motionFormats.ts',
   'src/lib/motionLibrary.ts',
   'src/components/MotionLibraryStudio.tsx',
+  'src/components/VrmMetaVersionProbe.tsx',
 ];
 for (const relativePath of requiredFiles) {
   assert.ok(fs.existsSync(path.join(__dirname, '..', relativePath)), `${relativePath} must exist.`);
@@ -66,6 +68,17 @@ for (const relativePath of requiredFiles) {
 const vrmaImporter = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'vrmaImporter.ts'), 'utf8');
 assert.ok(vrmaImporter.includes('new VRMAnimationLoaderPlugin(parser)'), 'VRMA must use the official loader plugin.');
 assert.ok(vrmaImporter.includes('Number(value[0]) - rest.x'), 'VRMA hips translation must become T-pose-relative motion.');
+assert.ok(vrmaImporter.includes("targetMetaVersion === '0' ? -1 : 1"), 'VRM0 hips X/Z axes must be inverted during import.');
+assert.ok(vrmaImporter.includes('(vrm0 ? -1 : 1)'), 'VRM0 quaternion X/Z components must follow the official conversion.');
+assert.ok(vrmaImporter.includes('modelInfo?.metaVersion'), 'VRMA import must use the loaded target VRM version.');
+
+const vrmaExporter = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'vrmaExporter.ts'), 'utf8');
+assert.ok(vrmaExporter.includes('return [-normalized[0], normalized[1], -normalized[2], normalized[3]]'), 'VRM0 rotations must return to canonical VRMA axes on export.');
+assert.ok(vrmaExporter.includes('return [-position[0], position[1], -position[2]]'), 'VRM0 root motion must return to canonical VRMA axes on export.');
+
+const versionProbe = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'VrmMetaVersionProbe.tsx'), 'utf8');
+assert.ok(versionProbe.includes("used.has('VRMC_vrm')"), 'The loaded model detector must recognize VRM 1.0.');
+assert.ok(versionProbe.includes("used.has('VRM')"), 'The loaded model detector must recognize VRM 0.x.');
 
 const motionImporter = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'motionImporter.ts'), 'utf8');
 assert.ok(motionImporter.includes('new BVHLoader().parse'), 'BVH support must remain enabled.');
@@ -81,7 +94,8 @@ assert.ok(motionLibrary.includes('DB_VERSION = 2'), 'The motion library schema m
 assert.ok(motionLibrary.includes('indexedDB.open(DB_NAME, DB_VERSION)'), 'The motion library must persist locally.');
 
 const rendererMain = fs.readFileSync(rendererPath, 'utf8');
+assert.ok(rendererMain.includes('<VrmMetaVersionProbe />'), 'VRM version detection must be mounted before the editor.');
 assert.ok(rendererMain.includes('<MotionLibraryStudio />'), 'The motion library must be mounted.');
 assert.ok(rendererMain.includes("'./motion-library-formats.css'"), 'Multi-format UI styles must be loaded.');
 
-console.log('RTMW3D, retargeting and multi-format motion import validation completed.');
+console.log('RTMW3D, retargeting, VRM axis conversion and multi-format motion import validation completed.');
