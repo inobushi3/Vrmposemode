@@ -1,8 +1,8 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
 import {
-  AlertTriangle, Check, Database, FileArchive, FolderPlus, Gauge, Library,
-  LoaderCircle, Move3D, PackageOpen, Play, Trash2, Upload, X,
+  AlertTriangle, Check, Cpu, Database, Download, FileArchive, FolderPlus, Gauge,
+  KeyRound, Library, LoaderCircle, Move3D, PackageOpen, Play, Trash2, Upload, X,
 } from 'lucide-react';
 import { useEditorStore } from '../store';
 import {
@@ -22,8 +22,19 @@ import {
   MOTION_FORMAT_LABELS,
   detectMotionFormat,
 } from '../lib/motionFormats';
+import {
+  extractPmpPap,
+  listPmpPapEntries,
+  parsePapBytes,
+  skeletonCodeFromPath,
+  type PmpPapEntry,
+} from '../lib/papPackage';
 
 type ImportMode = 'replace' | 'append';
+
+type MotionChoice =
+  | { key: string; kind: 'standard'; clipIndex: number; name: string; duration: number }
+  | { key: string; kind: 'pap'; pap: PmpPapEntry; name: string; duration: number };
 
 function readableError(error: unknown): string {
   return error instanceof Error ? error.message : String(error || 'Falha desconhecida.');
@@ -39,18 +50,27 @@ function shortDate(timestamp: number): string {
 }
 
 function seconds(value: number): string {
-  return value > 0 ? `${value.toFixed(2)}s` : '—';
+  return value > 0 ? `${value.toFixed(2)}s` : 'calculada após converter';
+}
+
+function arrayBufferFromView(value: Uint8Array): ArrayBuffer {
+  return value.buffer.slice(value.byteOffset, value.byteOffset + value.byteLength) as ArrayBuffer;
 }
 
 export default function MotionLibraryStudio(): JSX.Element | null {
   const inputRef = useRef<HTMLInputElement>(null);
+  const sklbInputRef = useRef<HTMLInputElement>(null);
   const [toolbarHost, setToolbarHost] = useState<HTMLElement | null>(null);
   const [open, setOpen] = useState(false);
   const [motions, setMotions] = useState<StoredMotion[]>([]);
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [inspection, setInspection] = useState<MotionInspection | null>(null);
   const [result, setResult] = useState<ImportedMotion | null>(null);
-  const [clipIndex, setClipIndex] = useState(0);
+  const [papEntries, setPapEntries] = useState<PmpPapEntry[]>([]);
+  const [choiceKey, setChoiceKey] = useState('');
+  const [sklbFile, setSklbFile] = useState<File | null>(null);
+  const [papStatus, setPapStatus] = useState<PapConverterStatus | null>(null);
+  const [papProgress, setPapProgress] = useState<PapConverterProgress | null>(null);
   const [sampleFps, setSampleFps] = useState(30);
   const [rootMotion, setRootMotion] = useState(true);
   const [rootScale, setRootScale] = useState(1);
@@ -70,7 +90,44 @@ export default function MotionLibraryStudio(): JSX.Element | null {
     () => motions.find((motion) => motion.id === selectedId) ?? null,
     [motions, selectedId],
   );
-  const selectedClip = inspection?.clips[clipIndex] ?? inspection?.clips[0] ?? null;
+
+  const choices = useMemo<MotionChoice[]>(() => {
+    const standard: MotionChoice[] = (inspection?.clips ?? []).map((clip) => ({
+      key: `standard:${clip.index}:${clip.embeddedPath ?? clip.name}`,
+      kind: 'standard',
+      clipIndex: clip.index,
+      name: clip.name,
+      duration: clip.duration,
+    }));
+    const pap: MotionChoice[] = papEntries.map((entry) => ({
+      key: `pap:${entry.path}:${entry.index}`,
+      kind: 'pap',
+      pap: entry,
+      name: `${entry.fileName} · ${entry.name}`,
+      duration: 0,
+    }));
+    return [...standard, ...pap];
+  }, [inspection, papEntries]);
+
+  const selectedChoice = choices.find((choice) => choice.key === choiceKey) ?? choices[0] ?? null;
+  const selectedPap = selectedChoice?.kind === 'pap' ? selectedChoice.pap : null;
+  const expectedSkeletonCode = selectedPap?.skeletonCode ?? null;
+  const expectedSklbName = expectedSkeletonCode ? `skl_${expectedSkeletonCode}b0001.sklb` : 'arquivo .sklb correspondente';
+  const sklbMismatch = Boolean(
+    selectedPap?.skeletonCode
+    && sklbFile
+    && !sklbFile.name.toLowerCase().includes(selectedPap.skeletonCode),
+  );
+  const canConvert = Boolean(
+    selected
+    && inspection
+    && selectedChoice
+    && modelInfo?.format === 'VRM'
+    && !busy
+    && (selectedChoice.kind === 'standard'
+      ? inspection.convertible
+      : papStatus?.supported && sklbFile && !sklbMismatch),
+  );
 
   useEffect(() => {
     const toolbar = document.querySelector<HTMLElement>('.toolbar');
@@ -82,6 +139,33 @@ export default function MotionLibraryStudio(): JSX.Element | null {
     setToolbarHost(host);
     return () => host.remove();
   }, []);
+
+  useEffect(() => {
+    if (!choices.length) {
+      setChoiceKey('');
+      return;
+    }
+    if (!choices.some((choice) => choice.key === choiceKey)) setChoiceKey(choices[0].key);
+  }, [choices, choiceKey]);
+
+  useEffect(() => {
+    if (!open || !window.desktop?.pap) return;
+    let active = true;
+    const removeProgress = window.desktop.pap.onProgress((progress) => {
+      if (!active) return;
+      setPapProgress(progress);
+      setMessage(progress.message);
+    });
+    void window.desktop.pap.status().then((status) => {
+      if (active) setPapStatus(status);
+    }).catch(() => {
+      if (active) setPapStatus(null);
+    });
+    return () => {
+      active = false;
+      removeProgress();
+    };
+  }, [open]);
 
   const refresh = async (preferredId?: string): Promise<void> => {
     const records = await listStoredMotions();
@@ -101,20 +185,41 @@ export default function MotionLibraryStudio(): JSX.Element | null {
     void refresh().catch((loadError) => setError(readableError(loadError)));
   }, [open]);
 
+  function inspectPapSources(record: StoredMotion): PmpPapEntry[] {
+    if (record.format === 'pmp') return listPmpPapEntries(record.data.slice(0));
+    if (record.format === 'pap') {
+      const parsed = parsePapBytes(record.data.slice(0));
+      const skeletonCode = skeletonCodeFromPath(record.fileName);
+      return parsed.animations.map((animation) => ({
+        ...animation,
+        path: record.fileName,
+        fileName: record.fileName,
+        skeletonCode,
+      }));
+    }
+    return [];
+  }
+
   useEffect(() => {
     setInspection(null);
+    setPapEntries([]);
     setResult(null);
-    setClipIndex(0);
+    setChoiceKey('');
     if (!selected) return;
     let cancelled = false;
     setBusy(true);
     setMessage(`Inspecionando ${selected.fileName}…`);
     void inspectMotionFile(selected.fileName, selected.data.slice(0), availableBones).then((value) => {
-      if (!cancelled) {
-        setInspection(value);
+      if (cancelled) return;
+      const detectedPap = inspectPapSources(selected);
+      setInspection(value);
+      setPapEntries(detectedPap);
+      if (detectedPap.length) {
+        setMessage(`${detectedPap.length} animação(ões) PAP encontrada(s). Escolha o SKLB correspondente para converter.`);
+      } else {
         setMessage(value.convertible
           ? `${MOTION_FORMAT_LABELS[value.format]} pronto para conversão.`
-          : `${MOTION_FORMAT_LABELS[value.format]} reconhecido, mas não pode ser convertido diretamente.`);
+          : `${MOTION_FORMAT_LABELS[value.format]} reconhecido, mas não contém animação conversível.`);
       }
     }).catch((inspectError) => {
       if (!cancelled) setError(readableError(inspectError));
@@ -138,12 +243,16 @@ export default function MotionLibraryStudio(): JSX.Element | null {
       const data = await file.arrayBuffer();
       const info = await inspectMotionFile(file.name, data.slice(0), availableBones);
       const record = await saveMotionFile(file, data);
+      const detectedPap = inspectPapSources(record);
       await refresh(record.id);
       setInspection(info);
-      setClipIndex(0);
-      setMessage(info.convertible
-        ? `${record.name} salvo e pronto para converter.`
-        : `${record.name} salvo para inspeção. O formato interno exige conversão externa.`);
+      setPapEntries(detectedPap);
+      setChoiceKey('');
+      setMessage(detectedPap.length
+        ? `${record.name} salvo. Foram encontradas ${detectedPap.length} animações PAP; selecione o SKLB para converter.`
+        : info.convertible
+          ? `${record.name} salvo e pronto para converter.`
+          : `${record.name} salvo, mas não contém uma animação esquelética conversível.`);
     } catch (addError) {
       setError(readableError(addError));
     } finally {
@@ -159,6 +268,7 @@ export default function MotionLibraryStudio(): JSX.Element | null {
       await deleteStoredMotion(selected.id);
       await refresh();
       setInspection(null);
+      setPapEntries([]);
       setResult(null);
       setMessage('Movimento removido da biblioteca local.');
     } catch (deleteError) {
@@ -168,12 +278,73 @@ export default function MotionLibraryStudio(): JSX.Element | null {
     }
   };
 
+  const preparePapConverter = async (): Promise<void> => {
+    const bridge = window.desktop?.pap;
+    if (!bridge) {
+      setError('O conversor PAP só funciona na janela Electron iniciada por npm start.');
+      return;
+    }
+    setBusy(true);
+    setError('');
+    setPapProgress(null);
+    try {
+      const status = await bridge.prepare();
+      setPapStatus(status);
+      setMessage('Conversor XAT preparado e pronto para PAP/SKLB.');
+    } catch (prepareError) {
+      setError(readableError(prepareError));
+    } finally {
+      setBusy(false);
+    }
+  };
+
+  const convertSelectedSource = async (): Promise<ImportedMotion> => {
+    if (!selected || !selectedChoice || !modelInfo) throw new Error('Selecione uma animação válida.');
+    const options = {
+      availableBones,
+      sampleFps,
+      rootMotion,
+      rootScale,
+      clipIndex: selectedChoice.kind === 'standard' ? selectedChoice.clipIndex : 0,
+      targetHeight: modelInfo.heightMeters ?? 1.65,
+    };
+
+    if (selectedChoice.kind === 'standard') {
+      return importMotionFile(selected.fileName, selected.data.slice(0), options);
+    }
+
+    if (!sklbFile) throw new Error(`Selecione ${expectedSklbName} para esta animação PAP.`);
+    if (sklbMismatch) throw new Error(`O PAP usa ${selectedChoice.pap.skeletonCode}, mas o SKLB escolhido é ${sklbFile.name}.`);
+    const bridge = window.desktop?.pap;
+    if (!bridge) throw new Error('O conversor PAP não está disponível fora do Electron.');
+    const papBytes = selected.format === 'pmp'
+      ? extractPmpPap(selected.data.slice(0), selectedChoice.pap.path)
+      : new Uint8Array(selected.data.slice(0));
+    const sklbBytes = new Uint8Array(await sklbFile.arrayBuffer());
+    const converted = await bridge.convert({
+      pap: papBytes,
+      sklb: sklbBytes,
+      animationIndex: selectedChoice.pap.index,
+      expectedSkeletonCode: selectedChoice.pap.skeletonCode ?? undefined,
+      sklbFileName: sklbFile.name,
+    });
+    const imported = await importMotionFile(
+      converted.fileName,
+      arrayBufferFromView(converted.fbx),
+      { ...options, clipIndex: 0 },
+    );
+    imported.name = converted.animationName || imported.name;
+    if (converted.warning) imported.warnings.push(converted.warning);
+    imported.warnings.push('Fonte PAP/Havok convertida localmente pelo runtime oficial do XAT antes do retargeting VRM.');
+    return imported;
+  };
+
   const applySelected = async (): Promise<void> => {
-    if (!selected || !inspection) {
+    if (!selected || !inspection || !selectedChoice) {
       setError('Importe ou selecione um arquivo de movimento.');
       return;
     }
-    if (!inspection.convertible) {
+    if (selectedChoice.kind === 'standard' && !inspection.convertible) {
       setError(inspection.warnings.join(' '));
       return;
     }
@@ -184,16 +355,12 @@ export default function MotionLibraryStudio(): JSX.Element | null {
     setBusy(true);
     setError('');
     setResult(null);
-    setMessage('Retargeting do esqueleto original para o humanoide normalizado VRM…');
+    setPapProgress(null);
+    setMessage(selectedChoice.kind === 'pap'
+      ? 'Extraindo PAP, vinculando o SKLB e convertendo Havok para FBX…'
+      : 'Retargeting do esqueleto original para o humanoide normalizado VRM…');
     try {
-      const imported = await importMotionFile(selected.fileName, selected.data.slice(0), {
-        availableBones,
-        sampleFps,
-        rootMotion,
-        rootScale,
-        clipIndex,
-        targetHeight: modelInfo.heightMeters ?? 1.65,
-      });
+      const imported = await convertSelectedSource();
       const offset = importMode === 'append' ? currentTime : 0;
       const positioned = imported.keyframes.map((keyframe) => ({
         ...keyframe,
@@ -219,13 +386,18 @@ export default function MotionLibraryStudio(): JSX.Element | null {
   if (!toolbarHost) return null;
 
   const toolbarButton = createPortal(
-    <button className="secondary-button motion-library-toolbar-button" onClick={() => setOpen(true)} title="Importar movimentos VRMA, BVH, FBX, GLB e glTF">
+    <button className="secondary-button motion-library-toolbar-button" onClick={() => setOpen(true)} title="Importar VRMA, BVH, FBX, GLB, glTF, PMP e PAP">
       <Library size={16} /> Movimentos
     </button>,
     toolbarHost,
   );
 
   if (!open) return toolbarButton;
+
+  const visibleWarnings = (inspection?.warnings ?? []).filter((warning) => {
+    if (!papEntries.length) return true;
+    return !/PAP uses proprietary|No directly convertible|formato interno exige|matching FFXIV skeleton/i.test(warning);
+  });
 
   return (
     <>
@@ -237,7 +409,7 @@ export default function MotionLibraryStudio(): JSX.Element | null {
           <section className="motion-library-studio" role="dialog" aria-modal="true" aria-label="Biblioteca de movimentos 3D">
             <header className="motion-library-header">
               <span className="motion-library-logo"><Library size={20} /></span>
-              <div><strong>Biblioteca de movimentos</strong><small>VRMA · BVH · FBX · GLB/glTF · inspeção PMP/PAP</small></div>
+              <div><strong>Biblioteca de movimentos</strong><small>VRMA · BVH · FBX · GLB/glTF · PMP/PAP + SKLB</small></div>
               <span className="motion-library-count"><Database size={14} /> {motions.length} salvo(s)</span>
               <button onClick={() => !busy && setOpen(false)}><X size={18} /></button>
             </header>
@@ -245,6 +417,13 @@ export default function MotionLibraryStudio(): JSX.Element | null {
             <input ref={inputRef} hidden type="file" accept={MOTION_FILE_ACCEPT} onChange={(event) => {
               const file = event.target.files?.[0];
               if (file) void addFile(file);
+              event.currentTarget.value = '';
+            }} />
+            <input ref={sklbInputRef} hidden type="file" accept=".sklb" onChange={(event) => {
+              const file = event.target.files?.[0] ?? null;
+              setSklbFile(file);
+              setResult(null);
+              setError('');
               event.currentTarget.value = '';
             }} />
 
@@ -277,14 +456,32 @@ export default function MotionLibraryStudio(): JSX.Element | null {
                     </div>
 
                     <div className="motion-library-stats">
-                      <span><b>{seconds(selectedClip?.duration ?? 0)}</b>Duração</span>
-                      <span><b>{inspection?.mappedBones ?? '—'}</b>Ossos mapeados</span>
-                      <span><b>{inspection ? (inspection.hasRootMotion ? 'Sim' : 'Não') : '—'}</b>Root motion</span>
+                      <span><b>{seconds(selectedChoice?.duration ?? 0)}</b>Duração</span>
+                      <span><b>{selectedChoice?.kind === 'pap' ? 'após XAT' : inspection?.mappedBones ?? '—'}</b>Ossos mapeados</span>
+                      <span><b>{selectedChoice?.kind === 'pap' ? 'detectado após converter' : inspection ? (inspection.hasRootMotion ? 'Sim' : 'Não') : '—'}</b>Root motion</span>
                       <span><b>{fileSize(selected.size)}</b>Arquivo</span>
                     </div>
 
-                    {inspection && inspection.clips.length > 1 && (
-                      <label className="motion-library-clip-select"><span>Clipe ou animação do pacote</span><select value={clipIndex} onChange={(event) => setClipIndex(Number(event.target.value))}>{inspection.clips.map((clip) => <option key={`${clip.index}-${clip.embeddedPath ?? clip.name}`} value={clip.index}>{clip.name}{clip.duration ? ` · ${clip.duration.toFixed(2)}s` : ''}</option>)}</select></label>
+                    {choices.length > 1 && (
+                      <label className="motion-library-clip-select"><span>Clipe ou animação do pacote</span><select value={selectedChoice?.key ?? ''} onChange={(event) => setChoiceKey(event.target.value)}>{choices.map((choice) => <option key={choice.key} value={choice.key}>{choice.kind === 'pap' ? `[PAP${choice.pap.skeletonCode ? ` ${choice.pap.skeletonCode}` : ''}] ` : ''}{choice.name}{choice.duration ? ` · ${choice.duration.toFixed(2)}s` : ''}</option>)}</select></label>
+                    )}
+
+                    {selectedChoice?.kind === 'pap' && (
+                      <section className="motion-pap-bridge">
+                        <div className="motion-pap-title"><Cpu size={16} /><span><strong>Conversão PAP/Havok</strong><small>O PMP contém uma dança real. Para decodificá-la, o PAP precisa do esqueleto FFXIV correspondente.</small></span></div>
+                        <div className="motion-pap-files">
+                          <button disabled={busy} onClick={() => sklbInputRef.current?.click()}><KeyRound size={14} /> {sklbFile?.name ?? `Selecionar ${expectedSklbName}`}</button>
+                          <button disabled={busy || papStatus?.installed || papStatus?.supported === false} onClick={() => void preparePapConverter()}>
+                            {papStatus?.installed ? <Check size={14} /> : <Download size={14} />}
+                            {papStatus?.installed ? 'XAT preparado' : 'Preparar conversor XAT'}
+                          </button>
+                        </div>
+                        <div className="motion-pap-status">
+                          <span>{papStatus?.supported === false ? 'PAP/Havok exige Windows.' : papStatus?.installed ? 'Runtime XATHavokInterop instalado localmente.' : 'O XAT oficial será baixado uma vez e reutilizado offline.'}</span>
+                          {papProgress && <div><i style={{ width: `${Math.max(2, Math.min(100, papProgress.progress * 100))}%` }} /></div>}
+                        </div>
+                        {sklbMismatch && <div className="motion-library-warning"><AlertTriangle size={14} /><span>Esse PAP usa {selectedPap?.skeletonCode}, mas você escolheu {sklbFile?.name}. Selecione {expectedSklbName}.</span></div>}
+                      </section>
                     )}
 
                     <div className="motion-library-settings">
@@ -295,14 +492,14 @@ export default function MotionLibraryStudio(): JSX.Element | null {
                     </div>
 
                     <div className="motion-library-note">
-                      O app calcula a diferença entre a animação e a pose de repouso do esqueleto original, converte essa diferença para os ossos VRM e cria keyframes comuns. Arquivos convertidos podem ser corrigidos e exportados pelo botão Exportar VRMA.
+                      O app executa a animação no esqueleto original, calcula a diferença para a pose de repouso e converte essa diferença para o humanoide VRM. O resultado vira keyframes comuns e pode ser exportado como VRMA.
                     </div>
 
                     {inspection?.packageEntries && (
-                      <div className="motion-package-summary"><PackageOpen size={16} /><span><strong>{inspection.packageEntries.length} arquivo(s) no pacote</strong><small>{inspection.packageEntries.filter((entry) => entry.toLowerCase().endsWith('.pap')).length} PAP · {inspection.clips.length} animação(ões) diretamente conversível(is)</small></span></div>
+                      <div className="motion-package-summary"><PackageOpen size={16} /><span><strong>{inspection.packageEntries.length} arquivo(s) no pacote</strong><small>{papEntries.length} animação(ões) PAP · {inspection.clips.length} animação(ões) padrão</small></span></div>
                     )}
 
-                    {inspection?.warnings.map((warning) => (
+                    {visibleWarnings.map((warning) => (
                       <div className="motion-library-warning" key={warning}><AlertTriangle size={14} /><span>{warning}</span></div>
                     ))}
 
@@ -323,8 +520,8 @@ export default function MotionLibraryStudio(): JSX.Element | null {
 
             <footer className="motion-library-footer">
               <button className="motion-library-close-button" disabled={busy} onClick={() => setOpen(false)}>Fechar</button>
-              <button className="motion-library-import-button" disabled={!selected || !inspection?.convertible || busy || modelInfo?.format !== 'VRM'} onClick={() => void applySelected()}>
-                {busy ? <LoaderCircle className="motion-library-spin" size={15} /> : <Play size={15} fill="currentColor" />} Converter para timeline
+              <button className="motion-library-import-button" disabled={!canConvert} onClick={() => void applySelected()}>
+                {busy ? <LoaderCircle className="motion-library-spin" size={15} /> : <Play size={15} fill="currentColor" />} {selectedChoice?.kind === 'pap' ? 'Converter PAP para timeline' : 'Converter para timeline'}
               </button>
             </footer>
           </section>
