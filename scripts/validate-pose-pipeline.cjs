@@ -55,7 +55,8 @@ assert.ok(!combined.includes('builtin-motion'), 'Hand-authored built-in motion s
 
 const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '..', 'package.json'), 'utf8'));
 assert.equal(packageJson.dependencies['@pixiv/three-vrm-animation'], '3.5.5');
-assert.equal(packageJson.dependencies.fflate, '0.8.2', 'PMP inspection requires deterministic ZIP support.');
+assert.equal(packageJson.dependencies.fflate, '0.8.2', 'PMP and MMD ZIP inspection requires deterministic ZIP support.');
+assert.equal(packageJson.dependencies['three-mmd-runtime'], 'npm:three@0.171.0', 'MMD support must pin the final official legacy Three runtime.');
 
 const requiredFiles = [
   'src/lib/vrmaImporter.ts',
@@ -68,6 +69,12 @@ const requiredFiles = [
   'src/lib/poseLibrary.ts',
   'src/components/PersonalPoseLibrary.tsx',
   'src/personal-pose-library.css',
+  'src/mmd-runtime.d.ts',
+  'src/lib/mmdHumanoid.ts',
+  'src/lib/mmdModelLoader.ts',
+  'src/lib/mmdMotionRetargeter.ts',
+  'src/components/MmdStudio.tsx',
+  'src/mmd-studio.css',
 ];
 for (const relativePath of requiredFiles) {
   assert.ok(fs.existsSync(path.join(__dirname, '..', relativePath)), `${relativePath} must exist.`);
@@ -117,11 +124,38 @@ const motionLibrary = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', '
 assert.ok(motionLibrary.includes('DB_VERSION = 2'), 'The motion library schema must include the source format.');
 assert.ok(motionLibrary.includes('indexedDB.open(DB_NAME, DB_VERSION)'), 'The motion library must persist locally.');
 
+const mmdLoader = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'mmdModelLoader.ts'), 'utf8');
+assert.ok(mmdLoader.includes("from 'three-mmd-runtime/examples/jsm/loaders/MMDLoader.js'"), 'PMX/PMD must use the official legacy MMDLoader implementation.');
+assert.ok(mmdLoader.includes("/\\.(pmx|pmd)$/i"), 'The source bundle must require PMX or PMD.');
+assert.ok(mmdLoader.includes('unzipSync'), 'ZIP-packaged MMD models must be supported.');
+assert.ok(mmdLoader.includes('manager.setURLModifier'), 'MMD texture paths must resolve through the selected local bundle.');
+assert.ok(mmdLoader.includes('loadVPD'), 'VPD poses must use the MMD parser.');
+
+const mmdMapping = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'mmdHumanoid.ts'), 'utf8');
+for (const standardBone of ['下半身', '上半身', '左腕', '左ひじ', '左手首', '左足', '左ひざ', '左足首']) {
+  assert.ok(mmdMapping.includes(standardBone), `Standard MMD bone ${standardBone} must be mapped.`);
+}
+
+const mmdRetargeter = fs.readFileSync(path.join(__dirname, '..', 'src', 'lib', 'mmdMotionRetargeter.ts'), 'utf8');
+assert.ok(mmdRetargeter.includes('new MMDAnimationHelper'), 'VMD conversion must evaluate MMD IK and grants.');
+assert.ok(mmdRetargeter.includes('physics: false'), 'Hair and cloth physics must not contaminate body VRMA conversion.');
+assert.ok(mmdRetargeter.includes('current.multiply(state.worldRotation.clone().invert())'), 'MMD retargeting must use source rest-pose deltas.');
+assert.ok(mmdRetargeter.includes("sourceFormat: 'VPD'"), 'VPD must compile into a static VRM pose timeline.');
+assert.ok(mmdRetargeter.includes('MAX_KEYFRAMES = 12000'), 'MMD conversion must have a hard timeline limit.');
+
+const mmdUi = fs.readFileSync(path.join(__dirname, '..', 'src', 'components', 'MmdStudio.tsx'), 'utf8');
+assert.ok(mmdUi.includes('accept=".vmd,.vpd"'), 'The MMD studio must accept VMD and VPD.');
+assert.ok(mmdUi.includes('accept=".pmx,.pmd,.zip'), 'The MMD studio must accept PMX, PMD and model ZIP bundles.');
+assert.ok(mmdUi.includes("modelInfo?.format !== 'VRM'"), 'MMD motion conversion must require a VRM destination.');
+assert.ok(mmdUi.includes('Pasta completa'), 'The studio must support selecting companion textures from a folder.');
+
 const rendererMain = fs.readFileSync(rendererPath, 'utf8');
 assert.ok(rendererMain.includes('<VrmMetaVersionProbe />'), 'VRM version detection must be mounted before the editor.');
 assert.ok(rendererMain.includes('<MotionLibraryStudio />'), 'The motion library must be mounted.');
+assert.ok(rendererMain.includes('<MmdStudio />'), 'The MMD model and motion studio must be mounted.');
 assert.ok(rendererMain.includes('<PersonalPoseLibrary />'), 'The personal pose library must be mounted.');
 assert.ok(rendererMain.includes("'./motion-library-formats.css'"), 'Multi-format UI styles must be loaded.');
+assert.ok(rendererMain.includes("'./mmd-studio.css'"), 'MMD studio styles must be loaded.');
 assert.ok(rendererMain.includes("'./personal-pose-library.css'"), 'Personal pose library styles must be loaded.');
 
-console.log('RTMW3D, retargeting, VRM axis conversion, multi-format import and personal pose library validation completed.');
+console.log('RTMW3D, VRM axes, multi-format import, MMD PMX/PMD/VMD/VPD and pose library validation completed.');
