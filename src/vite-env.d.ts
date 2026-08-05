@@ -33,6 +33,34 @@ interface Rtmw3dInferenceResult {
   inputSize: [number, number];
 }
 
+interface PapConverterStatus {
+  platform: string;
+  supported: boolean;
+  installed: boolean;
+  preparing: boolean;
+  executablePath: string | null;
+  downloadUrl: string;
+}
+
+interface PapConverterProgress {
+  phase: 'download' | 'extract' | 'ready' | 'convert' | 'done';
+  progress: number;
+  message: string;
+  received?: number;
+  total?: number;
+}
+
+interface PapConversionResult {
+  fbx: Uint8Array;
+  fileName: string;
+  animationName: string;
+  animationIndex: number;
+  animationCount: number;
+  papSkeletonId: number;
+  sklbSkeletonId: number;
+  warning: string | null;
+}
+
 declare global {
   interface Window {
     desktop?: {
@@ -44,6 +72,18 @@ declare global {
         prepare: () => Promise<Rtmw3dStatus>;
         infer: (request: { rgba: Uint8Array }) => Promise<Rtmw3dInferenceResult>;
         onProgress: (callback: (progress: Rtmw3dProgress) => void) => () => void;
+      };
+      pap: {
+        status: () => Promise<PapConverterStatus>;
+        prepare: () => Promise<PapConverterStatus>;
+        convert: (request: {
+          pap: Uint8Array;
+          sklb: Uint8Array;
+          animationIndex: number;
+          expectedSkeletonCode?: string;
+          sklbFileName?: string;
+        }) => Promise<PapConversionResult>;
+        onProgress: (callback: (progress: PapConverterProgress) => void) => () => void;
       };
     };
   }
