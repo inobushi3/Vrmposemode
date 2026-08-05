@@ -2,6 +2,7 @@ const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
 const { decodeDepthIndex, INPUT_HEIGHT } = require('../electron/rtmw3d.cjs');
+const { parsePap, parseSklb, XAT_DOWNLOAD_URL } = require('../electron/papConverter.cjs');
 
 const root = path.join(__dirname, '..');
 const read = (relativePath) => fs.readFileSync(path.join(root, relativePath), 'utf8');
@@ -47,6 +48,8 @@ assert.equal(packageJson.dependencies.fflate, '0.8.2');
 assert.equal(packageJson.dependencies['three-mmd-runtime'], 'npm:three@0.171.0');
 
 const requiredFiles = [
+  'electron/papConverter.cjs',
+  'src/lib/papPackage.ts',
   'src/lib/vrmaImporter.ts',
   'src/lib/vrmaExporter.ts',
   'src/lib/motionImporter.ts',
@@ -64,6 +67,49 @@ const requiredFiles = [
   'src/mmd-motion-package.css',
 ];
 for (const relativePath of requiredFiles) assert.ok(exists(relativePath), `${relativePath} must exist.`);
+
+const syntheticPap = Buffer.alloc(74);
+syntheticPap.write('pap ', 0, 'ascii');
+syntheticPap.writeInt32LE(0x00020001, 4);
+syntheticPap.writeInt16LE(1, 8);
+syntheticPap.writeInt32LE(101, 10);
+syntheticPap.writeInt32LE(26, 14);
+syntheticPap.writeInt32LE(66, 18);
+syntheticPap.writeInt32LE(70, 22);
+syntheticPap.write('dance_loop', 26, 'ascii');
+syntheticPap.writeInt16LE(0, 58);
+syntheticPap.writeInt16LE(2, 60);
+syntheticPap.writeInt32LE(0, 62);
+syntheticPap.set([1, 2, 3, 4], 66);
+const parsedPap = parsePap(syntheticPap);
+assert.equal(parsedPap.skeletonId, 101);
+assert.equal(parsedPap.animations.length, 1);
+assert.equal(parsedPap.animations[0].name, 'dance_loop');
+assert.equal(parsedPap.animations[0].havokIndex, 2);
+assert.deepEqual([...parsedPap.havokData], [1, 2, 3, 4]);
+
+const syntheticSklb = Buffer.alloc(52);
+syntheticSklb.write('blks', 0, 'ascii');
+syntheticSklb.writeInt16LE(0, 4);
+syntheticSklb.writeInt16LE(0x3133, 6);
+syntheticSklb.writeUInt32LE(40, 8);
+syntheticSklb.writeUInt32LE(44, 12);
+syntheticSklb.writeInt32LE(0, 16);
+syntheticSklb.writeInt32LE(101, 20);
+syntheticSklb.set([9, 8, 7, 6, 5, 4, 3, 2], 44);
+const parsedSklb = parseSklb(syntheticSklb);
+assert.equal(parsedSklb.skeletonId, 101);
+assert.equal(parsedSklb.oldHeader, false);
+assert.deepEqual([...parsedSklb.havokData], [9, 8, 7, 6, 5, 4, 3, 2]);
+assert.equal(XAT_DOWNLOAD_URL, 'https://github.com/Etheirys/XAT/releases/latest/download/XAT.zip');
+
+const papService = read('electron/papConverter.cjs');
+assert.ok(papService.includes("['createContainer', container]"));
+assert.ok(papService.includes("['addSkeleton', container, skeletonHavok, '0', container]"));
+assert.ok(papService.includes("['addAnimation', container, animationHavok"));
+assert.ok(papService.includes("['toFbxAnimation', container, '0', '0', outputFbx]"));
+assert.ok(papService.includes('XATHavokInterop.exe'));
+assert.ok(papService.includes('Visual C++ Redistributable 2012 x86'));
 
 const constants = read('src/constants.ts');
 assert.ok(constants.includes("{ id: 'tpose'"));
@@ -102,8 +148,27 @@ assert.ok(motionImporter.includes('new BVHLoader().parse'));
 assert.ok(motionImporter.includes('new FBXLoader().parse'));
 assert.ok(motionImporter.includes('loader.parseAsync'));
 assert.ok(motionImporter.includes("format === 'pmp'"));
-assert.ok(motionImporter.includes('proprietary Havok'));
 assert.ok(motionImporter.includes('MAX_KEYFRAMES = 12000'));
+
+const papPackage = read('src/lib/papPackage.ts');
+assert.ok(papPackage.includes('parsePapBytes'));
+assert.ok(papPackage.includes('listPmpPapEntries'));
+assert.ok(papPackage.includes('extractPmpPap'));
+assert.ok(papPackage.includes('/(?:^|\\/)(c\\d{4})(?:\\/|_)/'));
+
+const motionUi = read('src/components/MotionLibraryStudio.tsx');
+assert.ok(motionUi.includes('Selecionar ${expectedSklbName}'));
+assert.ok(motionUi.includes('window.desktop.pap.convert'));
+assert.ok(motionUi.includes('Converter PAP para timeline'));
+assert.ok(motionUi.includes('Preparar conversor XAT'));
+assert.ok(motionUi.includes('extractPmpPap'));
+
+const electronMain = read('electron/main.cjs');
+const preload = read('electron/preload.cjs');
+assert.ok(electronMain.includes("ipcMain.handle('pap:convert'"));
+assert.ok(electronMain.includes('new PapConverterService'));
+assert.ok(preload.includes("ipcRenderer.invoke('pap:convert'"));
+assert.ok(preload.includes("ipcRenderer.on('pap:progress'"));
 
 const mmdLoader = read('src/lib/mmdModelLoader.ts');
 assert.ok(mmdLoader.includes("from 'three-mmd-runtime/examples/jsm/loaders/MMDLoader.js'"));
@@ -150,4 +215,4 @@ assert.ok(rendererMain.includes('<MmdStudio />'));
 assert.ok(rendererMain.includes('<PersonalPoseLibrary />'));
 assert.ok(rendererMain.includes("'./mmd-motion-package.css'"));
 
-console.log('RTMW3D, VRM axes, facial expressions, multi-format import and MMD ZIP/VMD/VPD validation completed.');
+console.log('RTMW3D, VRM axes, PAP/SKLB/XAT conversion, facial expressions, multi-format import and MMD validation completed.');
