@@ -71,6 +71,7 @@ Final Fantasy XIV `.pap` files contain proprietary Havok animation data and do n
 
 ## Limitations
 
+- “Every 3D format” is not a technically valid promise: many 3D files contain geometry only, some animation formats omit the skeleton, and proprietary formats require their original runtime or decoder.
 - A valid humanoid VRM must be open before applying and exporting motion.
 - A GLB/glTF file must contain skeletal animation clips; geometry-only files cannot become VRMA.
 - Prefer GLB over glTF when the glTF references external `.bin` or texture files.
@@ -84,7 +85,7 @@ Final Fantasy XIV `.pap` files contain proprietary Havok animation data and do n
 2. IK handles for hands, feet, head and hips
 3. Motion block sequencer and transition blending
 4. Optional external PAP/SKLB conversion bridge
-5. Additional proprietary formats only when a reliable decoder and skeleton metadata are available
+5. Additional formats only when a reliable decoder and the required skeleton metadata are available
 
 ## Keyboard shortcuts
 
