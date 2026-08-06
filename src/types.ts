@@ -1,41 +1,110 @@
-export type Vec3Tuple = [number, number, number];
-export type QuatTuple = [number, number, number, number];
+export type AssetCategory =
+  | 'model'
+  | 'animation'
+  | 'animation-controller'
+  | 'texture'
+  | 'material'
+  | 'shader'
+  | 'prefab'
+  | 'scene'
+  | 'unity-asset'
+  | 'metadata'
+  | 'audio'
+  | 'script'
+  | 'binary'
+  | 'data'
+  | 'document'
+  | 'package'
+  | 'other';
 
-export interface BonePose {
-  rotation: QuatTuple;
-  position?: Vec3Tuple;
+export interface AssetDetails {
+  meshes?: number;
+  skins?: number;
+  animations?: number;
+  nodes?: number;
+  materials?: number;
+  textures?: number;
+  isVrm?: boolean;
+  isVrma?: boolean;
+  binary?: boolean;
+  hasGeometry?: boolean;
+  hasSkin?: boolean;
+  hasSkeleton?: boolean;
+  hasAnimation?: boolean;
 }
 
-export type PoseSnapshot = Record<string, BonePose>;
-
-export interface Keyframe {
-  id: string;
-  time: number;
-  pose: PoseSnapshot;
-  easing: 'linear' | 'smooth' | 'step';
-}
-
-export interface ModelInfo {
+export interface AnalyzedFile {
+  relativePath: string;
   name: string;
-  format: 'VRM' | 'GLB' | 'GLTF';
-  avatarName?: string;
-  author?: string;
-  version?: string;
-  boneCount: number;
+  size: number;
+  extension: string;
+  category: AssetCategory;
+  details: AssetDetails | null;
+  guid: string | null;
+  referencedGuids: string[];
+  resolvedDependencies: string[];
+  unresolvedGuids: string[];
+  modelScore: number;
+  modelReasons: string[];
+  animationScore: number;
+  animationReasons: string[];
 }
 
-export interface ProjectFile {
-  app: 'VRM Pose Mode';
-  version: 1;
-  name: string;
-  duration: number;
-  fps: number;
-  interpolation: 'LINEAR' | 'STEP';
-  modelFileName?: string;
-  keyframes: Keyframe[];
+export interface AnalysisResult {
+  analysisId: string;
+  sourcePath: string;
+  sourceName: string;
+  sourceKind: 'zip' | 'folder' | 'file';
+  analyzedAt: string;
+  totalFiles: number;
+  totalBytes: number;
+  counts: Partial<Record<AssetCategory, number>>;
+  modelCandidates: AnalyzedFile[];
+  animationCandidates: AnalyzedFile[];
+  unresolvedGuids: string[];
+  dependencyCount: number;
+  shaderFiles: string[];
+  warnings: string[];
+  files: AnalyzedFile[];
 }
 
-export interface SelectedTransform {
-  rotation: Vec3Tuple;
-  position: Vec3Tuple;
+export interface UnityInstallation {
+  version: string;
+  path: string;
+}
+
+export interface WorkspaceResult {
+  workspacePath: string;
+  unityProjectPath: string;
+  jobPath: string;
+  logPath: string;
+  outputPath: string;
+  modelCandidate: string;
+  animationCount: number;
+}
+
+export interface WorkerOutput {
+  type: string;
+  source: string;
+  output?: string;
+  status: 'success' | 'failed' | 'skipped';
+  message: string;
+}
+
+export interface WorkerResult {
+  status: string;
+  startedAt: string;
+  finishedAt: string;
+  modelAsset: string;
+  humanoidAvatar: boolean;
+  convertedMaterials: number;
+  exportedAnimations: number;
+  warnings: string[];
+  outputs: WorkerOutput[];
+}
+
+export interface RunUnityResult {
+  code: number;
+  result: WorkerResult | null;
+  logPath: string;
 }
