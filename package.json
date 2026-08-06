@@ -1,30 +1,28 @@
 {
-  "name": "vrm-pose-mode",
-  "version": "1.0.0",
+  "name": "auto-vrm-converter",
+  "version": "0.1.0",
   "private": true,
-  "description": "Editor desktop de poses e animações VRM com exportação VRMA.",
+  "description": "Desktop pipeline that inspects Unity character packages and converts humanoid models to VRM 1.0 and animations to VRMA through UniVRM.",
   "main": "electron/main.cjs",
   "type": "module",
   "scripts": {
+    "prestart": "node scripts/bootstrap.cjs",
     "start": "concurrently -k -s first \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
     "dev": "npm start",
     "build": "tsc -b && vite build",
-    "preview": "vite preview --host 127.0.0.1",
     "typecheck": "tsc -b --pretty false"
   },
   "dependencies": {
-    "@pixiv/three-vrm": "3.5.5",
+    "adm-zip": "^0.5.16",
     "lucide-react": "^0.468.0",
     "react": "^19.1.1",
-    "react-dom": "^19.1.1",
-    "three": "^0.180.0",
-    "zustand": "^5.0.8"
+    "react-dom": "^19.1.1"
   },
   "devDependencies": {
+    "@types/adm-zip": "^0.5.7",
     "@types/node": "^24.2.1",
     "@types/react": "^19.1.10",
     "@types/react-dom": "^19.1.7",
-    "@types/three": "^0.180.0",
     "@vitejs/plugin-react": "^5.0.0",
     "concurrently": "^9.2.0",
     "electron": "^37.2.6",

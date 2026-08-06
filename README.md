@@ -1,69 +1,60 @@
-# VRM Pose Mode
+# Auto VRM Converter
 
-Editor desktop para carregar modelos **VRM**, criar poses e animações por keyframes e exportar o resultado como **VRM Animation (`.vrma`)**.
+Aplicativo desktop experimental para analisar pacotes de personagens 3D feitos para Unity e automatizar a conversão possível para:
 
-## Recursos
+- **VRM 1.0**: modelo humanoide;
+- **VRMA**: animações humanoides separadas.
 
-- Carregamento por botão ou arrastar e soltar: `.vrm`, `.glb` e `.gltf`
-- Mapeamento automático dos ossos humanoides de modelos VRM
-- Seleção visual dos ossos no viewport e lista organizada por grupos
-- Gizmos locais de rotação e translação do quadril
-- Inspector numérico de rotação e posição
-- Biblioteca de poses iniciais
-- Timeline com keyframes, reprodução, loop, FPS e duração configuráveis
-- Interpolação suave durante a edição
-- Desfazer e refazer alterações da timeline
-- Câmeras prontas: frente, costas, laterais, 3/4 e rosto
-- Grade, controles visuais e cor de fundo configuráveis
-- Captura de preview em PNG
-- Salvamento e abertura de projeto `.vrmpose.json`
-- Exportação binária VRMA 1.0 usando a extensão oficial `VRMC_vrm_animation`
-- Interface desktop sem instalador obrigatório
+O aplicativo não altera o pacote original. Ele cria um workspace temporário, preserva arquivos `.meta`, reconstrói referências GUID, prepara um projeto Unity e executa um worker em batch mode usando UniVRM.
 
-## Como executar
+## Estado atual — MVP 0.1
 
-Requisitos: Node.js 20 ou superior.
+Funciona agora:
+
+- leitura de ZIP, pasta ou arquivo individual;
+- classificação de modelos, animações, texturas, materiais, shaders, prefabs, áudio e scripts;
+- inspeção básica de FBX, GLB/GLTF, VRM e VRMA;
+- análise de dependências Unity por GUID;
+- escolha manual do melhor candidato de modelo;
+- seleção das animações que serão processadas;
+- criação automática de projeto Unity 2022.3+;
+- instalação do UniVRM 0.131.0 por UPM;
+- configuração de FBX como Humanoid;
+- retarget de FBX de animação para o Avatar principal;
+- exportação de modelo humanoide como VRM 1.0;
+- exportação de `AnimationClip`, FBX, BVH e VRMA existente;
+- logs e relatório JSON reais do worker Unity.
+
+Ainda precisa evoluir:
+
+- mapeamento visual de ossos quando o Avatar automático falha;
+- presets VRM de expressão a partir de blendshapes;
+- spring bones automáticos para cabelo, roupa e acessórios;
+- conversão avançada de lilToon/Poiyomi e outros shaders;
+- associação inteligente de prefabs com roupas alternativas;
+- pré-visualização 3D antes da exportação.
+
+## Rodar
 
 ```bash
-npm install
 npm start
 ```
 
-O `npm start` inicia o Vite e abre a janela do Electron automaticamente.
+Na primeira execução, o script `prestart` instala dependências ausentes automaticamente.
 
-## Fluxo rápido
+## Fluxo
 
-1. Clique em **Abrir modelo** e selecione um `.vrm`.
-2. Escolha um osso na lista ou clique nos pontos do esqueleto.
-3. Rotacione com o gizmo ou use o inspector numérico.
-4. Posicione a timeline e clique em **Keyframe**.
-5. Repita para criar o movimento.
-6. Use **Exportar VRMA**.
+1. Abra um ZIP ou uma pasta.
+2. Revise o inventário.
+3. Escolha o modelo principal.
+4. Marque as animações.
+5. Crie o workspace.
+6. Selecione um Unity Editor 2022.3 LTS ou mais recente.
+7. Execute a conversão.
+8. Revise `Output/`, `Conversion/unity.log` e `Conversion/unity-result.json`.
 
-## Observações
+## Limitações importantes
 
-- A exportação `.vrma` requer um modelo VRM com humanoide válido carregado.
-- Arquivos GLB/GLTF podem ser visualizados e manipulados, mas não possuem necessariamente o mapeamento humanoide necessário para VRMA.
-- O projeto JSON salva a animação e as configurações, mas não incorpora o arquivo do modelo por questões de tamanho e licença.
-- Para `.gltf` com texturas externas, prefira converter para `.glb` ou `.vrm`, pois o seletor abre um único arquivo.
+A conversão automática depende de um esqueleto que o Unity consiga reconhecer como Humanoid. Modelos sem rig humano, com T-pose inválida, ossos ausentes ou dependências externas podem falhar. Nesse caso, o aplicativo registra a causa em vez de produzir um arquivo falso ou incompleto silenciosamente.
 
-## Atalhos
-
-- `Espaço`: reproduzir/pausar
-- `R`: gizmo de rotação
-- `G`: mover o quadril
-- `K`: adicionar/atualizar keyframe
-- `Ctrl+Z`: desfazer
-- `Ctrl+Y` ou `Ctrl+Shift+Z`: refazer
-
-## Estrutura
-
-- `electron/`: janela desktop e controles nativos
-- `src/components/Viewport.tsx`: cena Three.js, carregamento VRM e manipulação
-- `src/lib/vrmaExporter.ts`: gerador GLB/VRMA 1.0
-- `src/store.ts`: estado do editor e histórico
-- `src/App.tsx`: interface, inspector e timeline
-
-## Licença
-
-MIT
+O usuário é responsável por ter permissão para converter e usar os modelos e animações processados.

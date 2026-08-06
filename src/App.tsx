@@ -1,443 +1,591 @@
-import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react';
+import { useEffect, useMemo, useState, type DragEvent } from 'react';
 import {
-  Box, ChevronDown, CircleDot, Clock3, Download, Eye, EyeOff, FolderOpen,
-  Grid3X3, Image, KeyRound, Minus, MousePointer2, Move3D, Pause,
-  Play, Plus, Redo2, Rotate3D, RotateCcw, Save, Search, Settings2, SkipBack,
-  SlidersHorizontal, Sparkles, Square, Trash2, Undo2, Upload, X,
+  AlertTriangle,
+  Archive,
+  Box,
+  Check,
+  ChevronRight,
+  CircleDot,
+  Download,
+  FileArchive,
+  FileBox,
+  FileJson,
+  FolderOpen,
+  Gauge,
+  Image,
+  Layers3,
+  LoaderCircle,
+  Music2,
+  PackageCheck,
+  Play,
+  RefreshCw,
+  Search,
+  Settings2,
+  Sparkles,
+  SquareTerminal,
+  UploadCloud,
+  WandSparkles,
+  X,
 } from 'lucide-react';
-import Viewport from './components/Viewport';
-import { BONE_GROUPS, POSE_PRESETS, boneLabel } from './constants';
-import { dispatchEditorEvent, editorEvent } from './lib/events';
-import { useEditorStore } from './store';
-import type { ProjectFile, Vec3Tuple } from './types';
+import type {
+  AnalysisResult,
+  AnalyzedFile,
+  AssetCategory,
+  RunUnityResult,
+  UnityInstallation,
+  WorkspaceResult,
+} from './types';
 
-function safeFileName(value: string): string {
-  return value.replace(/[^a-z0-9-_]+/gi, '-').replace(/^-+|-+$/g, '') || 'vrm-animation';
+const CATEGORY_LABELS: Record<AssetCategory, string> = {
+  model: 'Modelos',
+  animation: 'Animações',
+  'animation-controller': 'Controllers',
+  texture: 'Texturas',
+  material: 'Materiais',
+  shader: 'Shaders',
+  prefab: 'Prefabs',
+  scene: 'Cenas',
+  'unity-asset': 'Assets Unity',
+  metadata: 'Metadados',
+  audio: 'Áudios',
+  script: 'Scripts',
+  binary: 'Binários',
+  data: 'Dados',
+  document: 'Documentos',
+  package: 'Pacotes',
+  other: 'Outros',
+};
+
+const CATEGORY_ICONS: Partial<Record<AssetCategory, typeof Box>> = {
+  model: Box,
+  animation: Music2,
+  texture: Image,
+  material: Layers3,
+  prefab: FileBox,
+  shader: Sparkles,
+  audio: Music2,
+  package: Archive,
+  data: FileJson,
+};
+
+function formatBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  const units = ['B', 'KB', 'MB', 'GB', 'TB'];
+  const exponent = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+  return `${(bytes / 1024 ** exponent).toFixed(exponent > 1 ? 2 : 0)} ${units[exponent]}`;
 }
 
-function downloadFile(content: BlobPart, type: string, fileName: string): void {
-  const url = URL.createObjectURL(new Blob([content], { type }));
-  const anchor = document.createElement('a');
-  anchor.href = url;
-  anchor.download = fileName;
-  anchor.click();
-  setTimeout(() => URL.revokeObjectURL(url), 1000);
+function scoreTone(score: number): string {
+  if (score >= 80) return 'excellent';
+  if (score >= 55) return 'good';
+  return 'weak';
 }
 
-function IconButton({ title, active, disabled, onClick, children }: {
-  title: string;
-  active?: boolean;
-  disabled?: boolean;
-  onClick?: () => void;
-  children: ReactNode;
-}): JSX.Element {
+function shortPath(value: string, max = 66): string {
+  if (value.length <= max) return value;
+  return `…${value.slice(-(max - 1))}`;
+}
+
+function CandidateCard({
+  file,
+  kind,
+  selected,
+  checked,
+  onSelect,
+  onToggle,
+}: {
+  file: AnalyzedFile;
+  kind: 'model' | 'animation';
+  selected?: boolean;
+  checked?: boolean;
+  onSelect?: () => void;
+  onToggle?: () => void;
+}) {
+  const score = kind === 'model' ? file.modelScore : file.animationScore;
+  const reasons = kind === 'model' ? file.modelReasons : file.animationReasons;
   return (
-    <button className={`icon-button${active ? ' active' : ''}`} title={title} disabled={disabled} onClick={onClick}>
-      {children}
+    <button
+      className={`candidate-card ${selected || checked ? 'selected' : ''}`}
+      onClick={onSelect ?? onToggle}
+      type="button"
+    >
+      <span className={`candidate-check ${selected || checked ? 'active' : ''}`}>
+        {selected || checked ? <Check size={13} /> : <CircleDot size={12} />}
+      </span>
+      <span className="candidate-main">
+        <strong>{file.name}</strong>
+        <small title={file.relativePath}>{shortPath(file.relativePath)}</small>
+        <span className="reason-row">
+          {reasons.slice(0, 2).map((reason) => <em key={reason}>{reason}</em>)}
+        </span>
+      </span>
+      <span className={`score score-${scoreTone(score)}`}>{score}</span>
     </button>
   );
 }
 
-function TitleBar(): JSX.Element {
+function EmptyState({ title, text }: { title: string; text: string }) {
   return (
-    <header className="titlebar">
-      <div className="titlebar-brand">
-        <div className="brand-mark"><Box size={15} strokeWidth={2.3} /></div>
-        <strong>VRM Pose Mode</strong>
-        <span>Animation Studio</span>
-      </div>
-      <div className="titlebar-drag" />
-      <div className="window-buttons">
-        <button title="Minimizar" onClick={() => window.desktop?.minimize()}><Minus size={15} /></button>
-        <button title="Maximizar" onClick={() => window.desktop?.maximize()}><Square size={12} /></button>
-        <button className="close" title="Fechar" onClick={() => window.desktop?.close()}><X size={15} /></button>
-      </div>
-    </header>
-  );
-}
-
-function Toolbar(): JSX.Element {
-  const modelInput = useRef<HTMLInputElement>(null);
-  const projectInput = useRef<HTMLInputElement>(null);
-  const modelInfo = useEditorStore((state) => state.modelInfo);
-  const projectName = useEditorStore((state) => state.projectName);
-  const duration = useEditorStore((state) => state.duration);
-  const fps = useEditorStore((state) => state.fps);
-  const interpolation = useEditorStore((state) => state.interpolation);
-  const keyframes = useEditorStore((state) => state.keyframes);
-  const modelFileName = useEditorStore((state) => state.modelFileName);
-  const gizmoMode = useEditorStore((state) => state.gizmoMode);
-  const history = useEditorStore((state) => state.history);
-  const future = useEditorStore((state) => state.future);
-  const setGizmoMode = useEditorStore((state) => state.setGizmoMode);
-  const undo = useEditorStore((state) => state.undo);
-  const redo = useEditorStore((state) => state.redo);
-  const loadProject = useEditorStore((state) => state.loadProject);
-  const setStatus = useEditorStore((state) => state.setStatus);
-
-  const saveProject = (): void => {
-    const project: ProjectFile = {
-      app: 'VRM Pose Mode',
-      version: 1,
-      name: projectName,
-      duration,
-      fps,
-      interpolation,
-      modelFileName: modelFileName ?? undefined,
-      keyframes,
-    };
-    downloadFile(JSON.stringify(project, null, 2), 'application/json', `${safeFileName(projectName)}.vrmpose.json`);
-    setStatus('Projeto salvo. O modelo VRM não é incorporado ao JSON.');
-  };
-
-  const importProject = async (file: File): Promise<void> => {
-    try {
-      const data = JSON.parse(await file.text()) as ProjectFile;
-      if (data.app !== 'VRM Pose Mode' || data.version !== 1 || !Array.isArray(data.keyframes)) throw new Error();
-      loadProject(data);
-    } catch {
-      setStatus('Esse arquivo não é um projeto válido do VRM Pose Mode.');
-    }
-  };
-
-  return (
-    <div className="toolbar">
-      <input
-        ref={modelInput}
-        hidden
-        type="file"
-        accept=".vrm,.glb,.gltf"
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) dispatchEditorEvent(editorEvent.loadModel, file);
-          event.currentTarget.value = '';
-        }}
-      />
-      <input
-        ref={projectInput}
-        hidden
-        type="file"
-        accept=".json,.vrmpose.json"
-        onChange={(event) => {
-          const file = event.target.files?.[0];
-          if (file) void importProject(file);
-          event.currentTarget.value = '';
-        }}
-      />
-
-      <button className="primary-button" onClick={() => modelInput.current?.click()}>
-        <FolderOpen size={16} /> Abrir modelo
-      </button>
-      <div className="toolbar-separator" />
-      <IconButton title="Importar projeto" onClick={() => projectInput.current?.click()}><Upload size={17} /></IconButton>
-      <IconButton title="Salvar projeto" onClick={saveProject}><Save size={17} /></IconButton>
-      <div className="toolbar-separator" />
-      <IconButton title="Desfazer" disabled={!history.length} onClick={undo}><Undo2 size={17} /></IconButton>
-      <IconButton title="Refazer" disabled={!future.length} onClick={redo}><Redo2 size={17} /></IconButton>
-      <div className="toolbar-separator" />
-      <IconButton title="Rotacionar osso (R)" active={gizmoMode === 'rotate'} onClick={() => setGizmoMode('rotate')}><Rotate3D size={18} /></IconButton>
-      <IconButton title="Mover quadril (G)" active={gizmoMode === 'translate'} onClick={() => setGizmoMode('translate')}><Move3D size={18} /></IconButton>
-      <IconButton title="Resetar pose" disabled={!modelInfo} onClick={() => dispatchEditorEvent(editorEvent.resetPose)}><RotateCcw size={17} /></IconButton>
-      <div className="toolbar-spacer" />
-      <button className="secondary-button" onClick={() => dispatchEditorEvent(editorEvent.screenshot)} disabled={!modelInfo}>
-        <Image size={16} /> Capturar PNG
-      </button>
-      <button className="export-button" onClick={() => dispatchEditorEvent(editorEvent.exportVrma)} disabled={!modelInfo}>
-        <Download size={16} /> Exportar VRMA
-      </button>
+    <div className="empty-state">
+      <FileArchive size={34} />
+      <strong>{title}</strong>
+      <p>{text}</p>
     </div>
   );
 }
 
-function LeftSidebar(): JSX.Element {
-  const [tab, setTab] = useState<'bones' | 'poses'>('bones');
+const NAV_ITEMS = [
+  { id: 'overview', icon: PackageCheck, label: 'Resumo' },
+  { id: 'inventory', icon: Layers3, label: 'Inventário' },
+  { id: 'model', icon: Box, label: 'Modelo VRM' },
+  { id: 'animations', icon: Music2, label: 'Animações VRMA' },
+  { id: 'convert', icon: Play, label: 'Conversão' },
+] as const;
+
+export default function App() {
+  const [analysis, setAnalysis] = useState<AnalysisResult | null>(null);
+  const [busy, setBusy] = useState(false);
+  const [error, setError] = useState('');
   const [search, setSearch] = useState('');
-  const availableBones = useEditorStore((state) => state.availableBones);
-  const selectedBone = useEditorStore((state) => state.selectedBone);
-  const selectBone = useEditorStore((state) => state.selectBone);
-  const modelInfo = useEditorStore((state) => state.modelInfo);
-
-  const groups = useMemo(() => BONE_GROUPS.map((group) => ({
-    ...group,
-    bones: group.bones.filter((bone) => availableBones.includes(bone) && boneLabel(bone).toLowerCase().includes(search.toLowerCase())),
-  })).filter((group) => group.bones.length), [availableBones, search]);
-
-  const ungrouped = availableBones.filter((bone) =>
-    !BONE_GROUPS.some((group) => group.bones.some((item) => item === bone)) && bone.toLowerCase().includes(search.toLowerCase()));
-
-  return (
-    <aside className="left-sidebar panel">
-      <div className="segmented-tabs">
-        <button className={tab === 'bones' ? 'active' : ''} onClick={() => setTab('bones')}><CircleDot size={15} /> Ossos</button>
-        <button className={tab === 'poses' ? 'active' : ''} onClick={() => setTab('poses')}><Sparkles size={15} /> Poses</button>
-      </div>
-
-      {tab === 'bones' ? (
-        <>
-          <div className="search-box"><Search size={14} /><input placeholder="Buscar osso…" value={search} onChange={(event) => setSearch(event.target.value)} /></div>
-          <div className="panel-section-heading"><span>Hierarquia humanoide</span><small>{availableBones.length}</small></div>
-          <div className="bone-list scroll-area">
-            {!modelInfo && <div className="empty-panel">Abra um VRM para ver e editar o esqueleto humanoide.</div>}
-            {groups.map((group) => (
-              <details key={group.title} open>
-                <summary><ChevronDown size={13} /> {group.title}</summary>
-                {group.bones.map((bone) => (
-                  <button key={bone} className={selectedBone === bone ? 'selected' : ''} onClick={() => selectBone(bone)}>
-                    <span className={`bone-dot ${bone.startsWith('left') ? 'left' : bone.startsWith('right') ? 'right' : ''}`} />
-                    <span>{boneLabel(bone)}</span>
-                    <small>{bone}</small>
-                  </button>
-                ))}
-              </details>
-            ))}
-            {ungrouped.map((bone) => (
-              <button key={bone} className={selectedBone === bone ? 'selected' : ''} onClick={() => selectBone(bone)}>
-                <span className="bone-dot" /><span>{boneLabel(bone)}</span><small>{bone}</small>
-              </button>
-            ))}
-          </div>
-        </>
-      ) : (
-        <div className="pose-library scroll-area">
-          <div className="panel-intro">Aplique uma base, refine com o gizmo e salve um keyframe.</div>
-          {POSE_PRESETS.map((preset, index) => (
-            <button key={preset.id} disabled={!modelInfo} onClick={() => dispatchEditorEvent(editorEvent.applyPreset, preset.id)}>
-              <span className={`pose-preview pose-${index + 1}`}><Sparkles size={18} /></span>
-              <span><strong>{preset.name}</strong><small>{preset.description}</small></span>
-            </button>
-          ))}
-        </div>
-      )}
-    </aside>
-  );
-}
-
-function NumberField({ value, onChange, step = 1, disabled }: { value: number; onChange: (value: number) => void; step?: number; disabled?: boolean }): JSX.Element {
-  return <input type="number" value={Number.isFinite(value) ? Number(value.toFixed(2)) : 0} step={step} disabled={disabled} onChange={(event) => onChange(Number(event.target.value))} />;
-}
-
-function TransformInspector(): JSX.Element {
-  const selectedBone = useEditorStore((state) => state.selectedBone);
-  const transform = useEditorStore((state) => state.selectedTransform);
-  const modelInfo = useEditorStore((state) => state.modelInfo);
-  const setTransformRotation = (axis: number, value: number): void => {
-    const next = [...transform.rotation] as Vec3Tuple;
-    next[axis] = value;
-    dispatchEditorEvent(editorEvent.setBoneRotation, next);
-  };
-  const setTransformPosition = (axis: number, value: number): void => {
-    const next = [...transform.position] as Vec3Tuple;
-    next[axis] = value;
-    dispatchEditorEvent(editorEvent.setBonePosition, next);
-  };
-
-  return (
-    <section className="inspector-section">
-      <div className="section-title"><SlidersHorizontal size={15} /><span>Transformação</span></div>
-      <div className="selected-bone-card">
-        <span className="selected-bone-icon"><CircleDot size={18} /></span>
-        <span><strong>{selectedBone ? boneLabel(selectedBone) : 'Nenhum osso'}</strong><small>{selectedBone ?? 'Selecione um osso no modelo'}</small></span>
-        <IconButton title="Resetar osso" disabled={!selectedBone} onClick={() => dispatchEditorEvent(editorEvent.resetBone)}><RotateCcw size={14} /></IconButton>
-      </div>
-
-      <label className="field-label">Rotação local</label>
-      <div className="axis-grid">
-        {(['X', 'Y', 'Z'] as const).map((axis, index) => (
-          <label key={axis}><span className={`axis axis-${axis.toLowerCase()}`}>{axis}</span><NumberField value={transform.rotation[index]} disabled={!selectedBone} onChange={(value) => setTransformRotation(index, value)} /><small>°</small></label>
-        ))}
-      </div>
-
-      <label className="field-label">Posição do quadril</label>
-      <div className="axis-grid">
-        {(['X', 'Y', 'Z'] as const).map((axis, index) => (
-          <label key={axis}><span className={`axis axis-${axis.toLowerCase()}`}>{axis}</span><NumberField step={0.01} value={transform.position[index]} disabled={selectedBone !== 'hips'} onChange={(value) => setTransformPosition(index, value)} /><small>m</small></label>
-        ))}
-      </div>
-      {modelInfo?.format !== 'VRM' && modelInfo && <div className="warning-note">GLB/GLTF pode ser posicionado, mas a exportação VRMA requer mapeamento humanoide VRM.</div>}
-    </section>
-  );
-}
-
-function SceneInspector(): JSX.Element {
-  const showGrid = useEditorStore((state) => state.showGrid);
-  const showHandles = useEditorStore((state) => state.showHandles);
-  const background = useEditorStore((state) => state.background);
-  const setShowGrid = useEditorStore((state) => state.setShowGrid);
-  const setShowHandles = useEditorStore((state) => state.setShowHandles);
-  const setBackground = useEditorStore((state) => state.setBackground);
-
-  return (
-    <section className="inspector-section">
-      <div className="section-title"><Settings2 size={15} /><span>Cena e câmera</span></div>
-      <div className="camera-buttons">
-        {['front', 'three', 'left', 'right', 'back', 'head'].map((view) => (
-          <button key={view} onClick={() => dispatchEditorEvent(editorEvent.camera, view)}>{({ front: 'Frente', three: '3/4', left: 'Esq.', right: 'Dir.', back: 'Costas', head: 'Rosto' } as Record<string, string>)[view]}</button>
-        ))}
-      </div>
-      <label className="toggle-row"><span><Grid3X3 size={15} /> Grade</span><input type="checkbox" checked={showGrid} onChange={(event) => setShowGrid(event.target.checked)} /></label>
-      <label className="toggle-row"><span>{showHandles ? <Eye size={15} /> : <EyeOff size={15} />} Controles dos ossos</span><input type="checkbox" checked={showHandles} onChange={(event) => setShowHandles(event.target.checked)} /></label>
-      <label className="color-row"><span>Fundo</span><input type="color" value={background} onChange={(event) => setBackground(event.target.value)} /><code>{background}</code></label>
-    </section>
-  );
-}
-
-function ProjectInspector(): JSX.Element {
-  const projectName = useEditorStore((state) => state.projectName);
-  const duration = useEditorStore((state) => state.duration);
-  const fps = useEditorStore((state) => state.fps);
-  const interpolation = useEditorStore((state) => state.interpolation);
-  const modelInfo = useEditorStore((state) => state.modelInfo);
-  const setProjectName = useEditorStore((state) => state.setProjectName);
-  const setDuration = useEditorStore((state) => state.setDuration);
-  const setFps = useEditorStore((state) => state.setFps);
-  const setInterpolation = useEditorStore((state) => state.setInterpolation);
-
-  return (
-    <section className="inspector-section">
-      <div className="section-title"><Clock3 size={15} /><span>Projeto</span></div>
-      <label className="stack-field"><span>Nome da animação</span><input value={projectName} onChange={(event) => setProjectName(event.target.value)} /></label>
-      <div className="two-fields">
-        <label className="stack-field"><span>Duração</span><div><NumberField value={duration} step={0.1} onChange={setDuration} /><small>s</small></div></label>
-        <label className="stack-field"><span>FPS</span><div><NumberField value={fps} onChange={setFps} /><small>fps</small></div></label>
-      </div>
-      <label className="stack-field"><span>Interpolação exportada</span><select value={interpolation} onChange={(event) => setInterpolation(event.target.value as 'LINEAR' | 'STEP')}><option value="LINEAR">Linear</option><option value="STEP">Sem interpolação</option></select></label>
-      {modelInfo && (
-        <div className="model-summary">
-          <div><Box size={18} /><span><strong>{modelInfo.avatarName || modelInfo.name}</strong><small>{modelInfo.format} · {modelInfo.boneCount} ossos</small></span></div>
-          {modelInfo.author && <small>Autor: {modelInfo.author}</small>}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function RightInspector(): JSX.Element {
-  return (
-    <aside className="right-sidebar panel scroll-area">
-      <TransformInspector />
-      <SceneInspector />
-      <ProjectInspector />
-    </aside>
-  );
-}
-
-function Timeline(): JSX.Element {
-  const currentTime = useEditorStore((state) => state.currentTime);
-  const duration = useEditorStore((state) => state.duration);
-  const fps = useEditorStore((state) => state.fps);
-  const playing = useEditorStore((state) => state.playing);
-  const loop = useEditorStore((state) => state.loop);
-  const keyframes = useEditorStore((state) => state.keyframes);
-  const dirtyPose = useEditorStore((state) => state.dirtyPose);
-  const setCurrentTime = useEditorStore((state) => state.setCurrentTime);
-  const togglePlaying = useEditorStore((state) => state.togglePlaying);
-  const setPlaying = useEditorStore((state) => state.setPlaying);
-  const setLoop = useEditorStore((state) => state.setLoop);
-  const removeKeyframe = useEditorStore((state) => state.removeKeyframe);
-  const clearKeyframes = useEditorStore((state) => state.clearKeyframes);
-
-  const frame = Math.round(currentTime * fps);
-  const totalFrames = Math.round(duration * fps);
-  const ticks = useMemo(() => Array.from({ length: 11 }, (_, index) => (duration / 10) * index), [duration]);
-  const nearest = keyframes.reduce<{ id: string; distance: number } | null>((best, item) => {
-    const distance = Math.abs(item.time - currentTime);
-    return !best || distance < best.distance ? { id: item.id, distance } : best;
-  }, null);
-
-  return (
-    <section className="timeline panel">
-      <div className="timeline-controls">
-        <IconButton title="Voltar ao início" onClick={() => { setPlaying(false); setCurrentTime(0); }}><SkipBack size={17} /></IconButton>
-        <button className="play-button" onClick={togglePlaying}>{playing ? <Pause size={17} fill="currentColor" /> : <Play size={17} fill="currentColor" />}</button>
-        <div className="time-readout"><strong>{currentTime.toFixed(2)}s</strong><span>F {frame} / {totalFrames}</span></div>
-        <button className={`loop-button${loop ? ' active' : ''}`} onClick={() => setLoop(!loop)}><RotateCcw size={14} /> Loop</button>
-        <div className="timeline-spacer" />
-        {dirtyPose && <span className="unsaved-pose"><span /> Pose não salva</span>}
-        <button className="add-key-button" onClick={() => dispatchEditorEvent(editorEvent.captureKeyframe)}><KeyRound size={15} /><Plus size={11} /> Keyframe</button>
-        <IconButton title="Excluir keyframe mais próximo" disabled={!nearest} onClick={() => nearest && removeKeyframe(nearest.id)}><Trash2 size={16} /></IconButton>
-        <IconButton title="Limpar timeline" disabled={!keyframes.length} onClick={clearKeyframes}><X size={16} /></IconButton>
-      </div>
-      <div className="timeline-track-wrap">
-        <div className="timeline-ruler">
-          {ticks.map((tick) => <span key={tick} style={{ left: `${(tick / duration) * 100}%` }}>{tick.toFixed(tick % 1 ? 1 : 0)}s</span>)}
-        </div>
-        <div className="timeline-track">
-          <div className="timeline-fill" style={{ width: `${(currentTime / duration) * 100}%` }} />
-          {keyframes.map((keyframe) => (
-            <button
-              key={keyframe.id}
-              className={`keyframe-dot${Math.abs(keyframe.time - currentTime) < 0.015 ? ' active' : ''}`}
-              style={{ left: `${(keyframe.time / duration) * 100}%` }}
-              title={`${keyframe.time.toFixed(2)}s`}
-              onClick={() => { setPlaying(false); setCurrentTime(keyframe.time); }}
-            ><span /></button>
-          ))}
-          <div className="playhead" style={{ left: `${(currentTime / duration) * 100}%` }}><span /></div>
-          <input
-            aria-label="Tempo da timeline"
-            type="range"
-            min={0}
-            max={duration}
-            step={1 / fps}
-            value={currentTime}
-            onChange={(event) => { setPlaying(false); setCurrentTime(Number(event.target.value)); }}
-          />
-        </div>
-      </div>
-    </section>
-  );
-}
-
-function StatusBar(): JSX.Element {
-  const status = useEditorStore((state) => state.status);
-  const model = useEditorStore((state) => state.modelInfo);
-  return (
-    <footer className="statusbar">
-      <span className={`status-dot${model ? ' ready' : ''}`} />
-      <span>{status}</span>
-      <div className="status-spacer" />
-      <span>VRMA 1.0</span><span>Three.js</span><span>Electron</span>
-    </footer>
-  );
-}
-
-export default function App(): JSX.Element {
-  const setGizmoMode = useEditorStore((state) => state.setGizmoMode);
-  const togglePlaying = useEditorStore((state) => state.togglePlaying);
-  const undo = useEditorStore((state) => state.undo);
-  const redo = useEditorStore((state) => state.redo);
+  const [activeView, setActiveView] = useState<'overview' | 'inventory' | 'model' | 'animations' | 'convert'>('overview');
+  const [selectedModel, setSelectedModel] = useState('');
+  const [selectedAnimations, setSelectedAnimations] = useState<Set<string>>(new Set());
+  const [author, setAuthor] = useState('Auto VRM Converter');
+  const [workspace, setWorkspace] = useState<WorkspaceResult | null>(null);
+  const [unityInstallations, setUnityInstallations] = useState<UnityInstallation[]>([]);
+  const [unityPath, setUnityPath] = useState('');
+  const [workerLogs, setWorkerLogs] = useState<string[]>([]);
+  const [runResult, setRunResult] = useState<RunUnityResult | null>(null);
+  const [dragging, setDragging] = useState(false);
 
   useEffect(() => {
-    const onKeyDown = (event: KeyboardEvent): void => {
-      const target = event.target as HTMLElement | null;
-      if (target?.matches('input, textarea, select')) return;
-      if (event.code === 'Space') { event.preventDefault(); togglePlaying(); }
-      if (event.key.toLowerCase() === 'r') setGizmoMode('rotate');
-      if (event.key.toLowerCase() === 'g') setGizmoMode('translate');
-      if (event.key.toLowerCase() === 'k') dispatchEditorEvent(editorEvent.captureKeyframe);
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); event.shiftKey ? redo() : undo(); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); redo(); }
-    };
-    window.addEventListener('keydown', onKeyDown);
-    return () => window.removeEventListener('keydown', onKeyDown);
-  }, [redo, setGizmoMode, togglePlaying, undo]);
+    const dispose = window.autoVrm.onWorkerLog((message) => {
+      if (!message) return;
+      setWorkerLogs((current) => [...current.slice(-399), message]);
+    });
+    void window.autoVrm.detectUnity().then((items) => {
+      setUnityInstallations(items);
+      if (items[0]) setUnityPath(items[0].path);
+    });
+    return dispose;
+  }, []);
+
+  useEffect(() => {
+    if (!analysis) return;
+    setSelectedModel(analysis.modelCandidates[0]?.relativePath ?? '');
+    setSelectedAnimations(new Set(analysis.animationCandidates.map((file) => file.relativePath)));
+    setWorkspace(null);
+    setRunResult(null);
+    setWorkerLogs([]);
+  }, [analysis]);
+
+  const filteredFiles = useMemo(() => {
+    if (!analysis) return [];
+    const normalized = search.trim().toLowerCase();
+    if (!normalized) return analysis.files;
+    return analysis.files.filter((file) =>
+      file.relativePath.toLowerCase().includes(normalized)
+      || file.category.toLowerCase().includes(normalized),
+    );
+  }, [analysis, search]);
+
+  const topCounts = useMemo(() => {
+    if (!analysis) return [];
+    return Object.entries(analysis.counts)
+      .filter(([, value]) => Boolean(value))
+      .sort((a, b) => Number(b[1]) - Number(a[1]))
+      .slice(0, 8) as [AssetCategory, number][];
+  }, [analysis]);
+
+  async function analyzePath(inputPath: string | null) {
+    if (!inputPath) return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await window.autoVrm.analyzePath(inputPath);
+      setAnalysis(result);
+      setActiveView('overview');
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+      setDragging(false);
+    }
+  }
+
+  async function chooseArchive() {
+    await analyzePath(await window.autoVrm.pickArchive());
+  }
+
+  async function chooseFolder() {
+    await analyzePath(await window.autoVrm.pickFolder());
+  }
+
+  async function handleDrop(event: DragEvent<HTMLDivElement>) {
+    event.preventDefault();
+    const file = event.dataTransfer.files[0];
+    if (!file) return;
+    await analyzePath(window.autoVrm.getPathForFile(file));
+  }
+
+  function toggleAnimation(relativePath: string) {
+    setSelectedAnimations((current) => {
+      const next = new Set(current);
+      if (next.has(relativePath)) next.delete(relativePath);
+      else next.add(relativePath);
+      return next;
+    });
+  }
+
+  async function prepareWorkspace() {
+    if (!analysis || !selectedModel) return;
+    setBusy(true);
+    setError('');
+    try {
+      const result = await window.autoVrm.prepareWorkspace(analysis.analysisId, {
+        modelPath: selectedModel,
+        animationPaths: [...selectedAnimations],
+        author,
+      });
+      if (result) {
+        setWorkspace(result);
+        setActiveView('convert');
+      }
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function pickUnity() {
+    const picked = await window.autoVrm.pickUnity();
+    if (picked) setUnityPath(picked);
+  }
+
+  async function runUnity() {
+    if (!workspace || !unityPath) return;
+    setBusy(true);
+    setRunResult(null);
+    setWorkerLogs([]);
+    setError('');
+    try {
+      const result = await window.autoVrm.runUnity({
+        unityPath,
+        unityProjectPath: workspace.unityProjectPath,
+        jobPath: workspace.jobPath,
+        logPath: workspace.logPath,
+      });
+      setRunResult(result);
+    } catch (cause) {
+      setError(cause instanceof Error ? cause.message : String(cause));
+    } finally {
+      setBusy(false);
+    }
+  }
 
   return (
     <div className="app-shell">
-      <TitleBar />
-      <Toolbar />
-      <main className="workspace">
-        <LeftSidebar />
-        <section className="center-workspace">
-          <div className="viewport-shell">
-            <Viewport />
-            <div className="viewport-badge"><MousePointer2 size={13} /> Edição local</div>
+      <header className="titlebar">
+        <div className="title-brand">
+          <span className="brand-icon"><WandSparkles size={17} /></span>
+          <strong>Auto VRM Converter</strong>
+          <small>Unity package → VRM 1.0 + VRMA</small>
+        </div>
+        <div className="title-drag" />
+        <span className="version-pill">MVP 0.1</span>
+      </header>
+
+      <aside className="sidebar">
+        <div className="sidebar-heading">Pipeline</div>
+        {NAV_ITEMS.map(({ id, icon: Icon, label }) => (
+          <button
+            key={id}
+            className={activeView === id ? 'active' : ''}
+            onClick={() => setActiveView(id)}
+            disabled={!analysis && id !== 'overview'}
+          >
+            <Icon size={17} />
+            <span>{label}</span>
+            <ChevronRight size={14} />
+          </button>
+        ))}
+
+        <div className="sidebar-heading secondary">Estado</div>
+        <div className="pipeline-status">
+          <span className={analysis ? 'done' : ''}><i>{analysis ? <Check size={11} /> : '1'}</i> Pacote analisado</span>
+          <span className={selectedModel ? 'done' : ''}><i>{selectedModel ? <Check size={11} /> : '2'}</i> Modelo escolhido</span>
+          <span className={workspace ? 'done' : ''}><i>{workspace ? <Check size={11} /> : '3'}</i> Workspace criado</span>
+          <span className={runResult?.result?.status === 'success' ? 'done' : ''}><i>4</i> Arquivos exportados</span>
+        </div>
+
+        <div className="sidebar-note">
+          <AlertTriangle size={15} />
+          <span>Shaders, expressões e spring bones podem exigir correção manual.</span>
+        </div>
+      </aside>
+
+      <main className="main-content">
+        {error && (
+          <div className="error-banner">
+            <AlertTriangle size={17} />
+            <span>{error}</span>
+            <button onClick={() => setError('')}><X size={15} /></button>
           </div>
-          <Timeline />
-        </section>
-        <RightInspector />
+        )}
+
+        {!analysis ? (
+          <section className="welcome-view">
+            <div className="hero-copy">
+              <span className="eyebrow">Conversão orientada por evidências</span>
+              <h1>Solte um pacote Unity.<br /><em>O app separa o que é cada coisa.</em></h1>
+              <p>
+                ZIPs, pastas, FBX, prefabs, texturas, materiais e AnimationClips são inventariados antes de qualquer exportação.
+                Depois, um worker Unity + UniVRM produz o VRM e os VRMA possíveis.
+              </p>
+              <div className="hero-actions">
+                <button className="primary" onClick={chooseArchive} disabled={busy}><FileArchive size={18} /> Abrir ZIP ou modelo</button>
+                <button className="secondary" onClick={chooseFolder} disabled={busy}><FolderOpen size={18} /> Abrir pasta</button>
+              </div>
+            </div>
+
+            <div
+              className={`drop-zone ${dragging ? 'dragging' : ''}`}
+              onDragEnter={(event) => { event.preventDefault(); setDragging(true); }}
+              onDragOver={(event) => event.preventDefault()}
+              onDragLeave={() => setDragging(false)}
+              onDrop={handleDrop}
+            >
+              {busy ? <LoaderCircle className="spin" size={46} /> : <UploadCloud size={46} />}
+              <strong>{busy ? 'Analisando pacote…' : 'Arraste o ZIP ou pasta aqui'}</strong>
+              <span>O conteúdo original não é alterado.</span>
+            </div>
+
+            <div className="feature-strip">
+              <span><Search size={17} /><b>Detecta conteúdo real</b><small>Não depende só da extensão.</small></span>
+              <span><Layers3 size={17} /><b>Reconstrói GUIDs</b><small>Prefabs, materiais e clips Unity.</small></span>
+              <span><Settings2 size={17} /><b>Automatiza Unity</b><small>Batch mode com logs verificáveis.</small></span>
+            </div>
+          </section>
+        ) : (
+          <>
+            {activeView === 'overview' && (
+              <section className="view-section">
+                <div className="page-heading">
+                  <div>
+                    <span className="eyebrow">Pacote analisado</span>
+                    <h1>{analysis.sourceName}</h1>
+                    <p>{analysis.totalFiles} arquivos · {formatBytes(analysis.totalBytes)} · {analysis.dependencyCount} referências resolvidas</p>
+                  </div>
+                  <div className="heading-actions">
+                    <button className="secondary" onClick={() => void window.autoVrm.exportReport(analysis.analysisId)}><Download size={16} /> Relatório JSON</button>
+                    <button className="secondary" onClick={chooseArchive}><RefreshCw size={16} /> Trocar pacote</button>
+                  </div>
+                </div>
+
+                <div className="stat-grid">
+                  <article><Box size={19} /><span><strong>{analysis.modelCandidates.length}</strong><small>candidatos de modelo</small></span></article>
+                  <article><Music2 size={19} /><span><strong>{analysis.animationCandidates.length}</strong><small>candidatos de animação</small></span></article>
+                  <article><Image size={19} /><span><strong>{analysis.counts.texture ?? 0}</strong><small>texturas</small></span></article>
+                  <article><AlertTriangle size={19} /><span><strong>{analysis.unresolvedGuids.length}</strong><small>GUIDs ausentes</small></span></article>
+                </div>
+
+                <div className="overview-grid">
+                  <div className="panel">
+                    <div className="panel-title"><Gauge size={17} /><span>Confiança da detecção</span></div>
+                    <div className="confidence-block">
+                      <div className="confidence-line">
+                        <span>Modelo principal</span>
+                        <strong>{analysis.modelCandidates[0]?.modelScore ?? 0}%</strong>
+                      </div>
+                      <div className="meter"><i style={{ width: `${Math.min(100, analysis.modelCandidates[0]?.modelScore ?? 0)}%` }} /></div>
+                      <p>{analysis.modelCandidates[0]?.relativePath ?? 'Nenhum modelo detectado.'}</p>
+                    </div>
+                    <div className="confidence-block">
+                      <div className="confidence-line">
+                        <span>Animações</span>
+                        <strong>{analysis.animationCandidates.length}</strong>
+                      </div>
+                      <div className="meter"><i style={{ width: `${Math.min(100, analysis.animationCandidates.length * 8)}%` }} /></div>
+                      <p>FBX, .anim, BVH e VRMA são tratados separadamente.</p>
+                    </div>
+                  </div>
+
+                  <div className="panel">
+                    <div className="panel-title"><Layers3 size={17} /><span>Conteúdo do pacote</span></div>
+                    <div className="category-grid">
+                      {topCounts.map(([category, count]) => {
+                        const Icon = CATEGORY_ICONS[category] ?? FileBox;
+                        return <span key={category}><Icon size={15} /><b>{count}</b><small>{CATEGORY_LABELS[category]}</small></span>;
+                      })}
+                    </div>
+                  </div>
+                </div>
+
+                <div className="panel warnings-panel">
+                  <div className="panel-title"><AlertTriangle size={17} /><span>O que precisa de atenção</span></div>
+                  {analysis.warnings.length ? analysis.warnings.map((warning) => <p key={warning}><AlertTriangle size={14} /> {warning}</p>) : <p className="success-line"><Check size={14} /> Nenhum problema estrutural óbvio foi encontrado.</p>}
+                </div>
+
+                <div className="next-action">
+                  <div><strong>Próxima etapa</strong><span>Confirme qual arquivo representa o personagem principal.</span></div>
+                  <button className="primary" onClick={() => setActiveView('model')}>Escolher modelo <ChevronRight size={16} /></button>
+                </div>
+              </section>
+            )}
+
+            {activeView === 'inventory' && (
+              <section className="view-section">
+                <div className="page-heading compact">
+                  <div><span className="eyebrow">Inventário completo</span><h1>{analysis.totalFiles} arquivos identificados</h1></div>
+                  <div className="search-field"><Search size={15} /><input value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Buscar nome, pasta ou tipo…" /></div>
+                </div>
+                <div className="inventory-table panel">
+                  <div className="inventory-head"><span>Arquivo</span><span>Tipo</span><span>Tamanho</span><span>Referências</span></div>
+                  <div className="inventory-body">
+                    {filteredFiles.map((file) => {
+                      const Icon = CATEGORY_ICONS[file.category] ?? FileBox;
+                      return (
+                        <div className="inventory-row" key={file.relativePath}>
+                          <span><Icon size={15} /><span><strong>{file.name}</strong><small>{file.relativePath}</small></span></span>
+                          <span><em>{CATEGORY_LABELS[file.category]}</em></span>
+                          <span>{formatBytes(file.size)}</span>
+                          <span className={file.unresolvedGuids.length ? 'danger-text' : ''}>{file.resolvedDependencies.length} / {file.unresolvedGuids.length}</span>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </div>
+              </section>
+            )}
+
+            {activeView === 'model' && (
+              <section className="view-section">
+                <div className="page-heading compact">
+                  <div><span className="eyebrow">Modelo de saída</span><h1>Qual arquivo é o personagem?</h1><p>O worker tentará gerar Avatar Humanoid e exportar VRM 1.0.</p></div>
+                </div>
+                <div className="selection-layout">
+                  <div className="candidate-list panel">
+                    <div className="panel-title"><Box size={17} /><span>Candidatos classificados</span><small>{analysis.modelCandidates.length}</small></div>
+                    {analysis.modelCandidates.length ? analysis.modelCandidates.map((file) => (
+                      <CandidateCard key={file.relativePath} file={file} kind="model" selected={selectedModel === file.relativePath} onSelect={() => setSelectedModel(file.relativePath)} />
+                    )) : <EmptyState title="Nenhum modelo detectado" text="O pacote não possui FBX, GLB, VRM ou prefab com malha identificável." />}
+                  </div>
+                  <div className="selection-info panel">
+                    <div className="panel-title"><Settings2 size={17} /><span>Estratégia de conversão</span></div>
+                    <div className="process-list">
+                      <span><i>1</i><b>Importar</b><small>Preserva .meta e referências do pacote.</small></span>
+                      <span><i>2</i><b>Humanoid</b><small>Configura FBX e valida Avatar humano.</small></span>
+                      <span><i>3</i><b>Materiais</b><small>Shaders incompatíveis recebem fallback PBR.</small></span>
+                      <span><i>4</i><b>VRM 1.0</b><small>Exporta pelo UniVRM com relatório de erro.</small></span>
+                    </div>
+                    <label className="field-label">Autor nos metadados VRM<input value={author} onChange={(event) => setAuthor(event.target.value)} /></label>
+                    <div className="honesty-note"><AlertTriangle size={15} /><span>Blendshapes são mantidos como morph targets, mas presets de expressão e spring bones ainda não são inferidos automaticamente.</span></div>
+                  </div>
+                </div>
+                <div className="next-action">
+                  <div><strong>{selectedModel ? 'Modelo selecionado' : 'Selecione um candidato'}</strong><span>{selectedModel || 'Nenhum arquivo escolhido.'}</span></div>
+                  <button className="primary" disabled={!selectedModel} onClick={() => setActiveView('animations')}>Configurar animações <ChevronRight size={16} /></button>
+                </div>
+              </section>
+            )}
+
+            {activeView === 'animations' && (
+              <section className="view-section">
+                <div className="page-heading compact">
+                  <div><span className="eyebrow">Exportação VRMA</span><h1>Escolha os movimentos</h1><p>{selectedAnimations.size} de {analysis.animationCandidates.length} candidatos serão processados.</p></div>
+                  <div className="heading-actions">
+                    <button className="secondary" onClick={() => setSelectedAnimations(new Set(analysis.animationCandidates.map((file) => file.relativePath)))}>Selecionar tudo</button>
+                    <button className="secondary" onClick={() => setSelectedAnimations(new Set())}>Limpar</button>
+                  </div>
+                </div>
+                <div className="candidate-list panel animation-list">
+                  <div className="panel-title"><Music2 size={17} /><span>Animações encontradas</span><small>{analysis.animationCandidates.length}</small></div>
+                  {analysis.animationCandidates.length ? analysis.animationCandidates.map((file) => (
+                    <CandidateCard key={file.relativePath} file={file} kind="animation" checked={selectedAnimations.has(file.relativePath)} onToggle={() => toggleAnimation(file.relativePath)} />
+                  )) : <EmptyState title="Nenhuma animação detectada" text="O modelo ainda poderá ser convertido, mas nenhum VRMA será criado." />}
+                </div>
+                <div className="next-action">
+                  <div><strong>Preparar projeto temporário</strong><span>O app copiará o pacote e instalará UniVRM 0.131.0 no workspace.</span></div>
+                  <button className="primary" disabled={!selectedModel || busy} onClick={prepareWorkspace}>{busy ? <LoaderCircle className="spin" size={16} /> : <WandSparkles size={16} />} Criar workspace</button>
+                </div>
+              </section>
+            )}
+
+            {activeView === 'convert' && (
+              <section className="view-section">
+                <div className="page-heading compact">
+                  <div><span className="eyebrow">Worker Unity</span><h1>Executar conversão real</h1><p>O resultado vem do Unity em batch mode, não de uma simulação da interface.</p></div>
+                </div>
+
+                {!workspace ? (
+                  <div className="panel workspace-empty">
+                    <SquareTerminal size={36} />
+                    <strong>O workspace ainda não foi criado.</strong>
+                    <p>Volte em “Animações VRMA”, confirme os arquivos e crie o projeto temporário.</p>
+                    <button className="primary" onClick={() => setActiveView('animations')}>Ir para animações</button>
+                  </div>
+                ) : (
+                  <div className="convert-layout">
+                    <div className="panel conversion-config">
+                      <div className="panel-title"><Settings2 size={17} /><span>Configuração</span></div>
+                      <label className="field-label">Unity Editor
+                        <div className="path-picker">
+                          <input value={unityPath} onChange={(event) => setUnityPath(event.target.value)} placeholder="C:\Program Files\Unity\Hub\Editor\...\Unity.exe" />
+                          <button onClick={pickUnity}><FolderOpen size={15} /></button>
+                        </div>
+                      </label>
+                      {unityInstallations.length > 0 && (
+                        <div className="unity-chips">
+                          {unityInstallations.slice(0, 4).map((item) => <button key={item.path} className={unityPath === item.path ? 'active' : ''} onClick={() => setUnityPath(item.path)}>Unity {item.version}</button>)}
+                        </div>
+                      )}
+                      <div className="workspace-summary">
+                        <span><b>Modelo</b><small>{workspace.modelCandidate}</small></span>
+                        <span><b>Animações</b><small>{workspace.animationCount} candidatas</small></span>
+                        <span><b>Saída</b><small>{workspace.outputPath}</small></span>
+                      </div>
+                      <button className="primary wide" disabled={!unityPath || busy} onClick={runUnity}>
+                        {busy ? <LoaderCircle className="spin" size={17} /> : <Play size={17} />}
+                        {busy ? 'Unity processando…' : 'Converter para VRM + VRMA'}
+                      </button>
+                      <button className="secondary wide" onClick={() => void window.autoVrm.openPath(workspace.workspacePath)}><FolderOpen size={16} /> Abrir workspace</button>
+                    </div>
+
+                    <div className="panel terminal-panel">
+                      <div className="panel-title"><SquareTerminal size={17} /><span>Log do worker</span><small>{workerLogs.length} linhas</small></div>
+                      <div className="terminal-output">
+                        {workerLogs.length ? workerLogs.map((line, index) => <code key={`${index}-${line}`}>{line}</code>) : <span>Aguardando execução do Unity…</span>}
+                      </div>
+                    </div>
+                  </div>
+                )}
+
+                {runResult && (
+                  <div className={`panel result-panel ${runResult.result?.status === 'success' ? 'success' : 'failed'}`}>
+                    <div className="result-heading">
+                      {runResult.result?.status === 'success' ? <Check size={24} /> : <AlertTriangle size={24} />}
+                      <span>
+                        <strong>{runResult.result?.status === 'success' ? 'Conversão finalizada' : 'Conversão terminou com falhas'}</strong>
+                        <small>Código do Unity: {runResult.code} · {runResult.result?.exportedAnimations ?? 0} VRMA exportados</small>
+                      </span>
+                      {workspace && <button className="secondary" onClick={() => void window.autoVrm.openPath(workspace.outputPath)}><FolderOpen size={15} /> Abrir saída</button>}
+                    </div>
+                    <div className="output-list">
+                      {runResult.result?.outputs?.map((output, index) => (
+                        <span key={`${output.source}-${index}`} className={output.status}>
+                          {output.status === 'success' ? <Check size={14} /> : <AlertTriangle size={14} />}
+                          <span><b>{output.type.toUpperCase()} · {output.source}</b><small>{output.message}</small></span>
+                        </span>
+                      ))}
+                    </div>
+                  </div>
+                )}
+              </section>
+            )}
+          </>
+        )}
       </main>
-      <StatusBar />
     </div>
   );
 }
