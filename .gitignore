@@ -1,5 +1,6 @@
 node_modules/
 dist/
-.DS_Store
+release/
 *.log
-.vscode/
+.DS_Store
+native/kokoro-cli/target/
