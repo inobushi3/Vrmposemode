@@ -177,11 +177,11 @@ export default function App() {
           <div className="modelGrid">
             <div className="modelItem">
               <strong>Whisper Large v3 Turbo</strong>
-              <span>transcrição • ROCm/Vulkan</span>
+              <span>transcrição • Vulkan na Radeon</span>
             </div>
             <div className="modelItem">
-              <strong>Qwen 3.5 9B</strong>
-              <span>tradução • ROCm/Vulkan</span>
+              <strong>Qwen 3 4B</strong>
+              <span>tradução • Vulkan estável</span>
             </div>
             <div className="modelItem">
               <strong>Kokoro 82M PT-BR</strong>
