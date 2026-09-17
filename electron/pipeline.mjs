@@ -23,6 +23,29 @@ function parseJsonArray(text) {
   return JSON.parse(raw.slice(a, b + 1));
 }
 
+function parseSingleTranslation(text, expectedId) {
+  const raw = String(text || '').replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+  if (!raw) return '';
+
+  try {
+    const arr = parseJsonArray(raw);
+    if (Array.isArray(arr) && arr.length) {
+      const exact = arr.find(x => Number(x?.id) === Number(expectedId));
+      const candidate = exact || arr[0];
+      const value = String(candidate?.text || candidate?.translation || '').trim();
+      if (value) return value;
+    }
+  } catch {}
+
+  try {
+    const obj = JSON.parse(raw);
+    const value = String(obj?.text || obj?.translation || obj?.translated || '').trim();
+    if (value) return value;
+  } catch {}
+
+  return raw.replace(/^["']|["']$/g, '').replace(/^Tradu[cç][aã]o\s*:\s*/i, '').trim();
+}
+
 function srtTime(sec) {
   const msTotal = Math.max(0, Math.round(sec * 1000));
   const h = Math.floor(msTotal / 3600000);
@@ -260,10 +283,39 @@ export class DubPipeline {
           }
         }
 
-        const map = new Map(parsed.map(x => [Number(x.id), String(x.text || '').trim()]));
+        const map = new Map(
+          parsed
+            .filter(x => x && x.id !== undefined)
+            .map(x => [Number(x.id), String(x.text || x.translation || '').trim()])
+        );
+
         for (const seg of batch) {
-          const translated = map.get(seg.id);
-          if (!translated) throw new Error(`A tradução não retornou o trecho ${seg.id}.`);
+          let translated = map.get(seg.id);
+
+          if (!translated) {
+            this.emit(pct, 'Traduzindo', `Corrigindo trecho ${seg.id + 1}/${working.length} individualmente...`);
+
+            let singleError = null;
+            for (let retry = 1; retry <= 4 && !translated; retry++) {
+              try {
+                const rawSingle = await requestTranslation([{ id: seg.id, text: seg.text }]);
+                translated = parseSingleTranslation(rawSingle, seg.id);
+              } catch (e) {
+                singleError = e;
+                if (retry < 4) await new Promise((resolve) => setTimeout(resolve, 700 * retry));
+              }
+            }
+
+            if (!translated) {
+              console.warn(
+                `Falha ao traduzir trecho ${seg.id}; mantendo texto original para continuar o vídeo.`,
+                singleError?.message || singleError || ''
+              );
+              translated = seg.text;
+              this.emit(pct, 'Traduzindo', `Aviso: trecho ${seg.id + 1} ficou no idioma original; continuando...`);
+            }
+          }
+
           seg.translated = translated;
         }
 
