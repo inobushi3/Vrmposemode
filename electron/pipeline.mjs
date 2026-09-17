@@ -199,52 +199,62 @@ export class DubPipeline {
     if (cache?.segments?.length === segments.length && cache.segments.every(x => x.translated)) return cache.segments;
     const working = cache?.segments?.length === segments.length ? cache.segments : structuredClone(segments);
 
-    const primaryModel = 'Qwen3.5-9B-GGUF';
-    const fallbackModel = 'Qwen3.5-4B-GGUF';
-    let activeModel = primaryModel;
-
-    const activateFallback = async (reason) => {
-      if (activeModel === fallbackModel) return;
-      console.warn('Qwen 9B falhou; ativando fallback 4B:', reason?.message || reason);
-      try { await this.runtime.unloadModel(activeModel); } catch {}
-      this.emit(31.5, 'Traduzindo', 'Qwen 9B falhou. Preparando Qwen 3.5 4B compatível...');
-      await this.runtime.ensureModel(fallbackModel, 31.5, 'Baixando Qwen 3.5 4B de fallback...');
-      await this.runtime.loadModel(fallbackModel, { ensure: false });
-      activeModel = fallbackModel;
+    const model = 'Qwen3-4B-GGUF';
+    const loadStableModel = async () => {
+      await this.runtime.loadModel(model, {
+        llamacpp_backend: 'vulkan',
+        ctx_size: 4096,
+        llamacpp_args: '--parallel 1',
+        merge_args: true,
+        save_options: false
+      });
     };
 
-    this.emit(31, 'Traduzindo', 'Carregando Qwen 3.5 9B na Radeon...');
-    try {
-      await this.runtime.loadModel(primaryModel);
-    } catch (e) {
-      await activateFallback(e);
-    }
+    this.emit(31, 'Traduzindo', 'Carregando Qwen 3 4B em Vulkan na Radeon...');
+    await loadStableModel();
 
-    const batchSize = 8;
+    const batchSize = 4;
+
+    const requestTranslation = async (request) => {
+      let lastError;
+      for (let attempt = 1; attempt <= 3; attempt++) {
+        this.checkCancel();
+        try {
+          return await this.runtime.translateBatch(request, sourceLanguage, model);
+        } catch (e) {
+          lastError = e;
+          const retryable = e?.status >= 500 || /watchdog|unresponsive|reset|llama-server/i.test(String(e?.message || ''));
+          if (!retryable || attempt === 3) throw e;
+
+          this.emit(32, 'Traduzindo', `A GPU reiniciou o modelo. Recuperando automaticamente (${attempt}/3)...`);
+          try { await this.runtime.unloadModel(model); } catch {}
+          await new Promise((resolve) => setTimeout(resolve, 1800 * attempt));
+          await loadStableModel();
+        }
+      }
+      throw lastError;
+    };
+
     try {
       for (let pos = 0; pos < working.length; pos += batchSize) {
         this.checkCancel();
         const batch = working.slice(pos, pos + batchSize).filter(x => !x.translated);
         if (!batch.length) continue;
-        const pct = 32 + (pos / working.length) * 23;
-        this.emit(pct, 'Traduzindo', `${activeModel.includes('4B') ? 'Qwen 4B' : 'Qwen 9B'}: ${Math.min(pos + batchSize, working.length)}/${working.length} trechos`);
-        const request = batch.map(x => ({ id: x.id, text: x.text }));
-        let parsed;
 
+        const pct = 32 + (pos / working.length) * 23;
+        this.emit(pct, 'Traduzindo', `Qwen 3 4B: ${Math.min(pos + batchSize, working.length)}/${working.length} trechos`);
+        const request = batch.map(x => ({ id: x.id, text: x.text }));
+
+        let parsed;
         try {
-          parsed = parseJsonArray(await this.runtime.translateBatch(request, sourceLanguage, activeModel));
+          parsed = parseJsonArray(await requestTranslation(request));
         } catch (e) {
-          // Erro HTTP 5xx no Qwen 9B: troca automaticamente para o 4B e repete o lote.
-          if (activeModel === primaryModel && (e?.status >= 500 || String(e?.message || '').includes('Lemonade'))) {
-            await activateFallback(e);
-            parsed = parseJsonArray(await this.runtime.translateBatch(request, sourceLanguage, activeModel));
-          } else {
-            // Se foi só resposta JSON ruim, reduz o lote para um trecho por vez.
-            parsed = [];
-            for (const item of request) {
-              const one = parseJsonArray(await this.runtime.translateBatch([item], sourceLanguage, activeModel));
-              parsed.push(...one);
-            }
+          // Se o modelo respondeu mas o JSON veio imperfeito, reduz para um trecho por vez.
+          if (e?.status >= 500 || /watchdog|unresponsive|reset|llama-server/i.test(String(e?.message || ''))) throw e;
+          parsed = [];
+          for (const item of request) {
+            const one = parseJsonArray(await requestTranslation([item]));
+            parsed.push(...one);
           }
         }
 
@@ -254,11 +264,13 @@ export class DubPipeline {
           if (!translated) throw new Error(`A tradução não retornou o trecho ${seg.id}.`);
           seg.translated = translated;
         }
+
         await writeJson(cacheFile, { segments: working });
       }
     } finally {
-      await this.runtime.unloadModel(activeModel);
+      await this.runtime.unloadModel(model);
     }
+
     return working;
   }
 
