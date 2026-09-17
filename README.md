@@ -5,7 +5,7 @@ Aplicativo desktop para Windows que recebe um vídeo de até **60 minutos** e en
 ## Fluxo
 
 1. **Whisper Large v3 Turbo** transcreve o áudio e preserva timestamps.
-2. **Qwen 3.5 9B** traduz os trechos para PT-BR sem resumir o conteúdo.
+2. **Qwen 3 4B** traduz os trechos para PT-BR sem resumir o conteúdo.
 3. **Kokoro 82M** gera a voz brasileira escolhida.
 4. **FFmpeg** ajusta cada fala ao tempo original e remonta o vídeo.
 5. O app salva `.srt` original e traduzido, além do MP4 final.
@@ -16,8 +16,8 @@ O app mantém cache por vídeo. Se o processo for interrompido, as etapas conclu
 
 A configuração padrão foi feita para Radeon RDNA4 no Windows:
 
-- Whisper: `whisper.cpp` via **ROCm**, com fallback **Vulkan**.
-- Tradução: `llama.cpp` via **ROCm**, com fallback **Vulkan**.
+- Whisper: `whisper.cpp` via **Vulkan** na Radeon.
+- Tradução: `llama.cpp` via **Vulkan**, com `--parallel 1` para estabilidade.
 - TTS: Kokoro/ONNX Runtime via **DirectML**.
 - Apenas um modelo pesado fica carregado por vez, reduzindo pressão sobre os 16 GB de VRAM.
 
@@ -26,7 +26,7 @@ A camada de runtime de Whisper/Qwen usa [Lemonade](https://github.com/lemonade-s
 ## Modelos
 
 - `Whisper-Large-v3-Turbo`
-- `Qwen3.5-9B-GGUF`
+- `Qwen3-4B-GGUF`
 - `Kokoro-82M-v1.0-ONNX`
   - `pf_dora` — feminina PT-BR
   - `pm_alex` — masculina PT-BR
