@@ -199,8 +199,27 @@ export class DubPipeline {
     if (cache?.segments?.length === segments.length && cache.segments.every(x => x.translated)) return cache.segments;
     const working = cache?.segments?.length === segments.length ? cache.segments : structuredClone(segments);
 
+    const primaryModel = 'Qwen3.5-9B-GGUF';
+    const fallbackModel = 'Qwen3.5-4B-GGUF';
+    let activeModel = primaryModel;
+
+    const activateFallback = async (reason) => {
+      if (activeModel === fallbackModel) return;
+      console.warn('Qwen 9B falhou; ativando fallback 4B:', reason?.message || reason);
+      try { await this.runtime.unloadModel(activeModel); } catch {}
+      this.emit(31.5, 'Traduzindo', 'Qwen 9B falhou. Preparando Qwen 3.5 4B compatível...');
+      await this.runtime.ensureModel(fallbackModel, 31.5, 'Baixando Qwen 3.5 4B de fallback...');
+      await this.runtime.loadModel(fallbackModel, { ensure: false });
+      activeModel = fallbackModel;
+    };
+
     this.emit(31, 'Traduzindo', 'Carregando Qwen 3.5 9B na Radeon...');
-    await this.runtime.loadModel('Qwen3.5-9B-GGUF');
+    try {
+      await this.runtime.loadModel(primaryModel);
+    } catch (e) {
+      await activateFallback(e);
+    }
+
     const batchSize = 8;
     try {
       for (let pos = 0; pos < working.length; pos += batchSize) {
@@ -208,18 +227,27 @@ export class DubPipeline {
         const batch = working.slice(pos, pos + batchSize).filter(x => !x.translated);
         if (!batch.length) continue;
         const pct = 32 + (pos / working.length) * 23;
-        this.emit(pct, 'Traduzindo', `Qwen: ${Math.min(pos + batchSize, working.length)}/${working.length} trechos`);
+        this.emit(pct, 'Traduzindo', `${activeModel.includes('4B') ? 'Qwen 4B' : 'Qwen 9B'}: ${Math.min(pos + batchSize, working.length)}/${working.length} trechos`);
         const request = batch.map(x => ({ id: x.id, text: x.text }));
         let parsed;
+
         try {
-          parsed = parseJsonArray(await this.runtime.translateBatch(request, sourceLanguage));
-        } catch {
-          parsed = [];
-          for (const item of request) {
-            const one = parseJsonArray(await this.runtime.translateBatch([item], sourceLanguage));
-            parsed.push(...one);
+          parsed = parseJsonArray(await this.runtime.translateBatch(request, sourceLanguage, activeModel));
+        } catch (e) {
+          // Erro HTTP 5xx no Qwen 9B: troca automaticamente para o 4B e repete o lote.
+          if (activeModel === primaryModel && (e?.status >= 500 || String(e?.message || '').includes('Lemonade'))) {
+            await activateFallback(e);
+            parsed = parseJsonArray(await this.runtime.translateBatch(request, sourceLanguage, activeModel));
+          } else {
+            // Se foi só resposta JSON ruim, reduz o lote para um trecho por vez.
+            parsed = [];
+            for (const item of request) {
+              const one = parseJsonArray(await this.runtime.translateBatch([item], sourceLanguage, activeModel));
+              parsed.push(...one);
+            }
           }
         }
+
         const map = new Map(parsed.map(x => [Number(x.id), String(x.text || '').trim()]));
         for (const seg of batch) {
           const translated = map.get(seg.id);
@@ -229,7 +257,7 @@ export class DubPipeline {
         await writeJson(cacheFile, { segments: working });
       }
     } finally {
-      await this.runtime.unloadModel('Qwen3.5-9B-GGUF');
+      await this.runtime.unloadModel(activeModel);
     }
     return working;
   }
