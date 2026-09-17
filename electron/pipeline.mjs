@@ -336,8 +336,7 @@ export class DubPipeline {
     const jobsPath = path.join(work, 'tts-jobs.json');
     await writeJson(jobsPath, segments.map(s => ({ id: s.id, text: s.translated, speed: 1.0 })));
 
-    const { cli, model, voices } = this.runtime.getKokoroPaths();
-    if (!(await exists(cli))) throw new Error('Kokoro CLI não foi encontrado. Em desenvolvimento, execute: npm run build:tts');
+    const { cli, model, voices } = await this.runtime.ensureKokoroCli();
 
     this.emit(56, 'Gerando voz', 'Kokoro PT-BR usando DirectML na Radeon...');
     let directMlActive = false;
