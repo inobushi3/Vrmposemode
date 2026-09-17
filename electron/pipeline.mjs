@@ -333,40 +333,48 @@ export class DubPipeline {
     const fitDir = path.join(work, 'tts-fit');
     await fsp.mkdir(rawDir, { recursive: true });
     await fsp.mkdir(fitDir, { recursive: true });
-    const jobsPath = path.join(work, 'tts-jobs.json');
-    await writeJson(jobsPath, segments.map(s => ({ id: s.id, text: s.translated, speed: 1.0 })));
 
-    const { cli, model, voices } = await this.runtime.ensureKokoroCli();
+    const total = segments.length;
+    this.emit(56, 'Gerando voz', 'Kokoro PT-BR pelo runtime local...');
 
-    this.emit(56, 'Gerando voz', 'Kokoro PT-BR usando DirectML na Radeon...');
-    let directMlActive = false;
-    await this.run(cli, ['--model', model, '--voices', voices, '--voice', voice, '--jobs', jobsPath, '--out-dir', rawDir], {
-      env: { ...process.env, KOKORO_ORT_PROVIDER: 'directml' },
-      onStdout: (txt) => {
-        const m = txt.match(/PROGRESS\s+(\d+)\s+(\d+)/);
-        if (m) this.emit(56 + (Number(m[1]) / Number(m[2])) * 18, 'Gerando voz', `Kokoro: ${m[1]}/${m[2]} trechos`);
-      },
-      onStderr: (txt) => {
-        if (txt.toLowerCase().includes('using directml execution provider')) directMlActive = true;
-      }
-    });
-    if (!directMlActive) {
-      throw new Error('O Kokoro não conseguiu ativar DirectML. Atualize o driver AMD; esta versão não aceita fallback de TTS para CPU.');
-    }
-
-    for (let i = 0; i < segments.length; i++) {
+    for (let i = 0; i < total; i++) {
       this.checkCancel();
       const s = segments[i];
       const src = path.join(rawDir, `${String(s.id).padStart(6,'0')}.wav`);
       const dst = path.join(fitDir, `${String(s.id).padStart(6,'0')}.wav`);
-      if (await exists(dst)) continue;
-      const rawDuration = (await this.probe(src)).duration;
-      const target = Math.max(0.12, s.end - s.start);
-      const factor = Math.max(1, rawDuration / target);
-      const filter = `${atempoChain(factor)},apad,atrim=0:${target.toFixed(6)}`;
-      await this.run(this.ffmpeg, ['-y','-i',src,'-af',filter,'-ar',String(TTS_RATE),'-ac','1','-c:a','pcm_s16le',dst]);
-      if (i % 8 === 0) this.emit(74 + (i / segments.length) * 10, 'Sincronizando voz', `${i + 1}/${segments.length} trechos`);
+
+      if (!(await exists(src))) {
+        let lastError = null;
+        for (let attempt = 1; attempt <= 3; attempt++) {
+          try {
+            const wav = await this.runtime.synthesizeSpeech(s.translated, voice, 1.0);
+            await fsp.writeFile(src, wav);
+            lastError = null;
+            break;
+          } catch (e) {
+            lastError = e;
+            if (attempt < 3) {
+              this.emit(56 + (i / Math.max(total, 1)) * 18, 'Gerando voz', `Kokoro: repetindo trecho ${i + 1}/${total}...`);
+              await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+            }
+          }
+        }
+        if (lastError) throw lastError;
+      }
+
+      if (!(await exists(dst))) {
+        const rawDuration = (await this.probe(src)).duration;
+        const target = Math.max(0.12, s.end - s.start);
+        const factor = Math.max(1, rawDuration / target);
+        const filter = `${atempoChain(factor)},apad,atrim=0:${target.toFixed(6)}`;
+        await this.run(this.ffmpeg, ['-y','-i',src,'-af',filter,'-ar',String(TTS_RATE),'-ac','1','-c:a','pcm_s16le',dst]);
+      }
+
+      if (i % 4 === 0 || i === total - 1) {
+        this.emit(56 + ((i + 1) / Math.max(total, 1)) * 28, 'Gerando voz', `Kokoro: ${i + 1}/${total} trechos`);
+      }
     }
+
     return fitDir;
   }
 
