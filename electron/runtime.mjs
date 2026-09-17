@@ -9,8 +9,7 @@ import AdmZip from 'adm-zip';
 
 const LEMON_PORT = 13357;
 const WHISPER_MODEL = 'Whisper-Large-v3-Turbo';
-const TRANSLATION_MODEL = 'Qwen3.5-9B-GGUF';
-const FALLBACK_TRANSLATION_MODEL = 'Qwen3.5-4B-GGUF';
+const TRANSLATION_MODEL = 'Qwen3-4B-GGUF';
 const KOKORO_BASE = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main';
 const KOKORO_MODEL_URL = `${KOKORO_BASE}/onnx/model.onnx?download=true`;
 const KOKORO_VOICES = ['pf_dora', 'pm_alex', 'pm_santa'];
@@ -230,26 +229,34 @@ export class AIRuntime {
     await ensureDir(this.root);
     await this.startServer();
 
-    // RX 9060 XT (RDNA4/gfx120x): ROCm primeiro; Vulkan como fallback, sempre GPU.
-    const llmBackend = await this.installBackend('llamacpp', 'rocm');
-    const whisperBackend = await this.installBackend('whispercpp', 'rocm');
-    this.backend = (llmBackend === 'rocm' && whisperBackend === 'rocm') ? 'ROCm' : 'Vulkan';
+    // Perfil estável para Radeon no Windows: Vulkan evita travamentos/watchdog do llama-server
+    // que podem ocorrer com alguns builds ROCm em RDNA4. Continua sendo aceleração na GPU.
+    const llmBackend = await this.installBackend('llamacpp', 'vulkan');
+    const whisperBackend = await this.installBackend('whispercpp', 'vulkan');
+    this.backend = 'Vulkan';
 
     await this.api('post', '/internal/set', {
-      llamacpp_backend: llmBackend,
-      whispercpp_backend: whisperBackend,
-      ctx_size: 8192,
+      llamacpp_backend: 'vulkan',
+      whispercpp_backend: 'vulkan',
+      ctx_size: 4096,
       max_loaded_models: 1,
+      llamacpp_args: '--parallel 1',
       models_dir: this.lemonadeCache,
       broadcast: false
     }, { timeout: 30000 });
 
     await this.pullModel(WHISPER_MODEL, 38, 'Baixando Whisper Large v3 Turbo...');
-    await this.pullModel(TRANSLATION_MODEL, 52, 'Baixando Qwen 3.5 9B para tradução...');
+    await this.pullModel(TRANSLATION_MODEL, 52, 'Baixando Qwen 3 4B para tradução...');
     await this.ensureKokoro();
 
-    await fsp.writeFile(this.stateFile, JSON.stringify({ modelsReady: true, backend: this.backend, llmBackend, whisperBackend }, null, 2));
-    this.emit(100, `IA pronta na Radeon (${this.backend}).`);
+    await fsp.writeFile(this.stateFile, JSON.stringify({
+      modelsReady: true,
+      profileVersion: 2,
+      backend: this.backend,
+      llmBackend,
+      whisperBackend
+    }, null, 2));
+    this.emit(100, 'IA pronta na Radeon (Vulkan estável).');
     return this.status();
   }
 
@@ -266,10 +273,13 @@ export class AIRuntime {
     await this.pullModel(model, progress, message || `Baixando ${model}...`);
   }
 
-  async loadModel(model, { ensure = true } = {}) {
+  async loadModel(model, { ensure = true, ...loadOptions } = {}) {
     await this.startServer();
     if (ensure) await this.ensureModel(model);
-    await this.api('post', '/v1/load', { model_name: model }, { timeout: 15 * 60 * 1000 });
+    await this.api('post', '/v1/load', {
+      model_name: model,
+      ...loadOptions
+    }, { timeout: 15 * 60 * 1000 });
   }
 
   async unloadModel(model) {
@@ -298,7 +308,8 @@ export class AIRuntime {
     const response = await this.api('post', '/v1/chat/completions', {
       model,
       temperature: 0.1,
-      max_tokens: 4096,
+      max_completion_tokens: 1536,
+      enable_thinking: false,
       messages: [
         { role: 'system', content: system },
         { role: 'user', content: JSON.stringify(items) }
@@ -323,4 +334,4 @@ export class AIRuntime {
   }
 }
 
-export { WHISPER_MODEL, TRANSLATION_MODEL, FALLBACK_TRANSLATION_MODEL, KOKORO_VOICES };
+export { WHISPER_MODEL, TRANSLATION_MODEL, KOKORO_VOICES };
