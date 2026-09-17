@@ -10,9 +10,7 @@ import AdmZip from 'adm-zip';
 const LEMON_PORT = 13357;
 const WHISPER_MODEL = 'Whisper-Large-v3-Turbo';
 const TRANSLATION_MODEL = 'Qwen3-4B-GGUF';
-const KOKORO_BASE = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main';
-const KOKORO_MODEL_URL = `${KOKORO_BASE}/onnx/model.onnx?download=true`;
-const KOKORO_VOICES = ['pf_dora', 'pm_alex', 'pm_santa'];
+const KOKORO_MODEL = 'kokoro-v1';
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -65,9 +63,6 @@ export class AIRuntime {
     this.root = path.join(app.getPath('userData'), 'ai-runtime');
     this.lemonadeDir = path.join(this.root, 'lemonade');
     this.lemonadeCache = path.join(this.root, 'lemonade-cache');
-    this.kokoroDir = path.join(this.root, 'kokoro');
-    this.kokoroModel = path.join(this.kokoroDir, 'model.onnx');
-    this.kokoroVoices = path.join(this.kokoroDir, 'voices');
     this.stateFile = path.join(this.root, 'state.json');
     this.apiKey = crypto.createHash('sha256').update(`${app.getName()}-local-dubber`).digest('hex');
     this.baseUrl = `http://127.0.0.1:${LEMON_PORT}`;
@@ -116,12 +111,11 @@ export class AIRuntime {
 
   async status() {
     const lemonExe = await findRecursive(this.lemonadeDir, 'lemond.exe').catch(() => null);
-    const voicesReady = (await Promise.all(KOKORO_VOICES.map(v => exists(path.join(this.kokoroVoices, `${v}.bin`))))).every(Boolean);
-    const ttsReady = await exists(this.kokoroModel) && voicesReady;
     let state = {};
     try { state = JSON.parse(await fsp.readFile(this.stateFile, 'utf8')); } catch {}
     const runtimeInstalled = Boolean(lemonExe);
     const modelsReady = Boolean(state.modelsReady);
+    const ttsReady = Boolean(state.ttsReady || state.modelsReady);
     const backend = state.backend || null;
     return {
       ready: runtimeInstalled && modelsReady && ttsReady,
@@ -210,22 +204,6 @@ export class AIRuntime {
     }
   }
 
-  async ensureKokoro() {
-    await ensureDir(this.kokoroVoices);
-    if (!(await exists(this.kokoroModel))) {
-      this.emit(72, 'Baixando Kokoro 82M PT-BR...');
-      await download(KOKORO_MODEL_URL, this.kokoroModel, (p) => this.emit(72 + p * 8, `Kokoro: ${Math.round(p * 100)}%`));
-    }
-    for (let i = 0; i < KOKORO_VOICES.length; i++) {
-      const voice = KOKORO_VOICES[i];
-      const dest = path.join(this.kokoroVoices, `${voice}.bin`);
-      if (!(await exists(dest))) {
-        this.emit(81 + i * 3, `Baixando voz ${voice}...`);
-        await download(`${KOKORO_BASE}/voices/${voice}.bin?download=true`, dest);
-      }
-    }
-  }
-
   async setup() {
     await ensureDir(this.root);
     await this.startServer();
@@ -248,11 +226,13 @@ export class AIRuntime {
 
     await this.pullModel(WHISPER_MODEL, 38, 'Baixando Whisper Large v3 Turbo...');
     await this.pullModel(TRANSLATION_MODEL, 52, 'Baixando Qwen 3 4B para tradução...');
-    await this.ensureKokoro();
+    await this.installBackend('kokoro', 'cpu');
+    await this.pullModel(KOKORO_MODEL, 72, 'Baixando Kokoro TTS...');
 
     await fsp.writeFile(this.stateFile, JSON.stringify({
       modelsReady: true,
-      profileVersion: 2,
+      ttsReady: true,
+      profileVersion: 3,
       backend: this.backend,
       llmBackend,
       whisperBackend
@@ -327,55 +307,20 @@ export class AIRuntime {
     return response.data?.choices?.[0]?.message?.content || '';
   }
 
-  getKokoroPaths() {
-    let cli;
-    if (app.isPackaged) {
-      cli = path.join(process.resourcesPath, 'bin', 'kokoro-cli.exe');
-    } else {
-      cli = path.join(app.getAppPath(), 'native', 'kokoro-cli', 'target', 'release', 'kokoro-cli.exe');
-    }
-    return { cli, model: this.kokoroModel, voices: this.kokoroVoices };
-  }
-
-  async ensureKokoroCli() {
-    const paths = this.getKokoroPaths();
-    if (await exists(paths.cli)) return paths;
-
-    if (app.isPackaged) {
-      throw new Error('Instalação incompleta: kokoro-cli.exe não foi incluído no aplicativo.');
-    }
-
-    const manifest = path.join(app.getAppPath(), 'native', 'kokoro-cli', 'Cargo.toml');
-    this.emit(55, 'Preparando o TTS Kokoro pela primeira vez...');
-
-    await new Promise((resolve, reject) => {
-      const child = spawn('cargo', ['build', '--manifest-path', manifest, '--release'], {
-        cwd: app.getAppPath(),
-        windowsHide: true,
-        env: process.env
-      });
-
-      let output = '';
-      child.stdout?.on('data', d => { output += d.toString(); console.log(`[cargo] ${d}`); });
-      child.stderr?.on('data', d => { output += d.toString(); console.warn(`[cargo] ${d}`); });
-      child.on('error', (err) => {
-        if (err?.code === 'ENOENT') {
-          reject(new Error('Rust/Cargo não está instalado ou não está no PATH. Instale Rust e abra o app novamente.'));
-        } else {
-          reject(err);
-        }
-      });
-      child.on('close', code => {
-        if (code === 0) resolve();
-        else reject(new Error(`Falha ao preparar Kokoro TTS (cargo exit ${code}).\n${output.split('\n').slice(-20).join('\n')}`));
-      });
+  async synthesizeSpeech(text, voice = 'pm_alex', speed = 1.0) {
+    await this.startServer();
+    await this.ensureModel(KOKORO_MODEL, 72, 'Baixando Kokoro TTS...');
+    const response = await this.api('post', '/v1/audio/speech', {
+      model: KOKORO_MODEL,
+      input: text,
+      voice,
+      speed,
+      response_format: 'wav'
+    }, {
+      timeout: 5 * 60 * 1000,
+      responseType: 'arraybuffer'
     });
-
-    if (!(await exists(paths.cli))) {
-      throw new Error('A compilação terminou, mas kokoro-cli.exe não foi encontrado.');
-    }
-
-    return paths;
+    return Buffer.from(response.data);
   }
 
   async stop() {
@@ -384,4 +329,4 @@ export class AIRuntime {
   }
 }
 
-export { WHISPER_MODEL, TRANSLATION_MODEL, KOKORO_VOICES };
+export { WHISPER_MODEL, TRANSLATION_MODEL, KOKORO_MODEL };
