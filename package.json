@@ -43,8 +43,12 @@
     ],
     "extraResources": [
       {
-        "from": "native/kokoro-cli/target/release/kokoro-cli.exe",
-        "to": "bin/kokoro-cli.exe"
+        "from": "native/kokoro-cli/target/release",
+        "to": "bin",
+        "filter": [
+          "kokoro-cli.exe",
+          "*.dll"
+        ]
       }
     ],
     "win": {
