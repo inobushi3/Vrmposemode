@@ -184,8 +184,8 @@ export default function App() {
               <span>tradução • Vulkan estável</span>
             </div>
             <div className="modelItem">
-              <strong>Kokoro 82M PT-BR</strong>
-              <span>TTS • DirectML na Radeon</span>
+              <strong>Kokoro v1 PT-BR</strong>
+              <span>TTS local • runtime Lemonade</span>
             </div>
           </div>
 
