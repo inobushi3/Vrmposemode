@@ -73,6 +73,7 @@ export class AIRuntime {
     this.baseUrl = `http://127.0.0.1:${LEMON_PORT}`;
     this.process = null;
     this.backend = null;
+    this.translationBackendReady = false;
     this.onProgress = onProgress;
   }
 
@@ -258,6 +259,14 @@ export class AIRuntime {
     }, null, 2));
     this.emit(100, 'IA pronta na Radeon (Vulkan estável).');
     return this.status();
+  }
+
+  async ensureStableTranslationBackend() {
+    if (this.translationBackendReady) return;
+    await this.startServer();
+    this.emit(30.5, 'Preparando backend Vulkan estável para tradução...');
+    await this.installBackend('llamacpp', 'vulkan');
+    this.translationBackendReady = true;
   }
 
   async ensureModel(model, progress = 0, message = '') {
