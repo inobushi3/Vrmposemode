@@ -337,6 +337,47 @@ export class AIRuntime {
     return { cli, model: this.kokoroModel, voices: this.kokoroVoices };
   }
 
+  async ensureKokoroCli() {
+    const paths = this.getKokoroPaths();
+    if (await exists(paths.cli)) return paths;
+
+    if (app.isPackaged) {
+      throw new Error('Instalação incompleta: kokoro-cli.exe não foi incluído no aplicativo.');
+    }
+
+    const manifest = path.join(app.getAppPath(), 'native', 'kokoro-cli', 'Cargo.toml');
+    this.emit(55, 'Preparando o TTS Kokoro pela primeira vez...');
+
+    await new Promise((resolve, reject) => {
+      const child = spawn('cargo', ['build', '--manifest-path', manifest, '--release'], {
+        cwd: app.getAppPath(),
+        windowsHide: true,
+        env: process.env
+      });
+
+      let output = '';
+      child.stdout?.on('data', d => { output += d.toString(); console.log(`[cargo] ${d}`); });
+      child.stderr?.on('data', d => { output += d.toString(); console.warn(`[cargo] ${d}`); });
+      child.on('error', (err) => {
+        if (err?.code === 'ENOENT') {
+          reject(new Error('Rust/Cargo não está instalado ou não está no PATH. Instale Rust e abra o app novamente.'));
+        } else {
+          reject(err);
+        }
+      });
+      child.on('close', code => {
+        if (code === 0) resolve();
+        else reject(new Error(`Falha ao preparar Kokoro TTS (cargo exit ${code}).\n${output.split('\n').slice(-20).join('\n')}`));
+      });
+    });
+
+    if (!(await exists(paths.cli))) {
+      throw new Error('A compilação terminou, mas kokoro-cli.exe não foi encontrado.');
+    }
+
+    return paths;
+  }
+
   async stop() {
     if (this.process && !this.process.killed) this.process.kill();
     this.process = null;
