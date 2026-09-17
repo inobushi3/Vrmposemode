@@ -200,6 +200,8 @@ export class DubPipeline {
     const working = cache?.segments?.length === segments.length ? cache.segments : structuredClone(segments);
 
     const model = 'Qwen3-4B-GGUF';
+    await this.runtime.ensureStableTranslationBackend();
+
     const loadStableModel = async () => {
       await this.runtime.loadModel(model, {
         llamacpp_backend: 'vulkan',
