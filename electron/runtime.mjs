@@ -10,6 +10,7 @@ import AdmZip from 'adm-zip';
 const LEMON_PORT = 13357;
 const WHISPER_MODEL = 'Whisper-Large-v3-Turbo';
 const TRANSLATION_MODEL = 'Qwen3.5-9B-GGUF';
+const FALLBACK_TRANSLATION_MODEL = 'Qwen3.5-4B-GGUF';
 const KOKORO_BASE = 'https://huggingface.co/onnx-community/Kokoro-82M-v1.0-ONNX/resolve/main';
 const KOKORO_MODEL_URL = `${KOKORO_BASE}/onnx/model.onnx?download=true`;
 const KOKORO_VOICES = ['pf_dora', 'pm_alex', 'pm_santa'];
@@ -81,14 +82,32 @@ export class AIRuntime {
   }
 
   async api(method, url, data, config = {}) {
-    return axios({
-      ...config,
-      method,
-      url: `${this.baseUrl}${url}`,
-      data,
-      timeout: config.timeout ?? 120000,
-      headers: { ...this.authHeaders(), ...(config.headers || {}) }
-    });
+    try {
+      return await axios({
+        ...config,
+        method,
+        url: `${this.baseUrl}${url}`,
+        data,
+        timeout: config.timeout ?? 120000,
+        headers: { ...this.authHeaders(), ...(config.headers || {}) }
+      });
+    } catch (e) {
+      const status = e?.response?.status;
+      const body = e?.response?.data;
+      let detail = '';
+      if (typeof body === 'string') detail = body;
+      else if (body?.error?.message) detail = body.error.message;
+      else if (body?.error) detail = typeof body.error === 'string' ? body.error : JSON.stringify(body.error);
+      else if (body?.detail) detail = typeof body.detail === 'string' ? body.detail : JSON.stringify(body.detail);
+      else if (body) {
+        try { detail = JSON.stringify(body); } catch {}
+      }
+      const prefix = `Lemonade ${status || 'erro'} em ${String(method).toUpperCase()} ${url}`;
+      const err = new Error(detail ? `${prefix}: ${detail}` : `${prefix}: ${e?.message || 'falha desconhecida'}`);
+      err.status = status;
+      err.cause = e;
+      throw err;
+    }
   }
 
   emit(progress, message) {
@@ -234,8 +253,22 @@ export class AIRuntime {
     return this.status();
   }
 
-  async loadModel(model) {
+  async ensureModel(model, progress = 0, message = '') {
     await this.startServer();
+    try {
+      const response = await this.api('get', '/v1/models?show_all=true', undefined, { timeout: 15000 });
+      const models = response.data?.data || [];
+      const hit = models.find((x) => x.id === model);
+      if (hit?.downloaded) return;
+    } catch (e) {
+      console.warn('Não consegui consultar os modelos antes do load:', e?.message || e);
+    }
+    await this.pullModel(model, progress, message || `Baixando ${model}...`);
+  }
+
+  async loadModel(model, { ensure = true } = {}) {
+    await this.startServer();
+    if (ensure) await this.ensureModel(model);
     await this.api('post', '/v1/load', { model_name: model }, { timeout: 15 * 60 * 1000 });
   }
 
@@ -259,11 +292,11 @@ export class AIRuntime {
     return response.data;
   }
 
-  async translateBatch(items, sourceLanguage = 'auto') {
+  async translateBatch(items, sourceLanguage = 'auto', model = TRANSLATION_MODEL) {
     const source = sourceLanguage === 'auto' ? 'o idioma detectado' : sourceLanguage;
     const system = `Você traduz cursos para português do Brasil. Traduza de ${source} para pt-BR. Preserve nomes de programas, código, atalhos, comandos, números e termos técnicos. Não resuma e não explique. Mantenha cada id e retorne SOMENTE um array JSON válido no formato [{"id":0,"text":"..."}].`;
     const response = await this.api('post', '/v1/chat/completions', {
-      model: TRANSLATION_MODEL,
+      model,
       temperature: 0.1,
       max_tokens: 4096,
       messages: [
@@ -290,4 +323,4 @@ export class AIRuntime {
   }
 }
 
-export { WHISPER_MODEL, TRANSLATION_MODEL, KOKORO_VOICES };
+export { WHISPER_MODEL, TRANSLATION_MODEL, FALLBACK_TRANSLATION_MODEL, KOKORO_VOICES };
