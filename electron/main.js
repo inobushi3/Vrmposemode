@@ -38,7 +38,7 @@ async function ensureWorker(language) {
 
   ocrLanguage = language;
   workerPromise = createWorker(language, 1, {
-    cachePath: path.join(app.getPath('userData'), 'tessdata-cache'),
+    cachePath: app.getPath('userData'),
     logger(message) {
       if (mainWindow && !mainWindow.isDestroyed()) {
         mainWindow.webContents.send('ocr:progress', message);
