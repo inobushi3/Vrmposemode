@@ -24,25 +24,25 @@ O repositório foi reiniciado como um projeto novo. A versão atual é um MVP fu
 
 Requer Node.js 20+.
 
+Abra CMD ou PowerShell na pasta do projeto e rode:
+
 ```bash
 npm install
 npm start
 ```
 
-Na primeira leitura de cada idioma, o Tesseract pode precisar baixar os dados daquele idioma. Depois eles ficam em cache no diretório de dados do aplicativo.
-
-## Gerar instalador
+`npm install` só é necessário na primeira vez ou quando as dependências mudarem. Depois disso, normalmente basta:
 
 ```bash
-npm run dist
+npm start
 ```
 
-O Electron Builder gera um instalador NSIS do Windows na pasta `dist`.
+Na primeira leitura de cada idioma, o Tesseract pode precisar baixar os dados daquele idioma. Depois eles ficam em cache no diretório de dados do aplicativo.
 
 ## Como usar
 
 1. Abra o jogo.
-2. Abra o FrameLens.
+2. Abra CMD ou PowerShell na pasta do FrameLens e execute `npm start`.
 3. Em **Aplicativo**, escolha manualmente a janela do jogo.
 4. Clique em **Conectar ao jogo**.
 5. Clique em **Marcar área** e arraste exatamente sobre a caixa de diálogo.
