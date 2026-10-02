@@ -5,33 +5,12 @@
   "description": "Responsive desktop OCR for reading dialogue directly from a selected game window.",
   "main": "electron/main.js",
   "scripts": {
-    "start": "electron .",
-    "dev": "electron .",
-    "dist": "electron-builder --win"
-  },
-  "build": {
-    "appId": "com.inobushi.framelens",
-    "productName": "FrameLens",
-    "files": [
-      "electron/**/*",
-      "src/**/*",
-      "index.html",
-      "package.json"
-    ],
-    "win": {
-      "target": "nsis",
-      "artifactName": "FrameLens-${version}-Setup.${ext}"
-    },
-    "nsis": {
-      "oneClick": false,
-      "allowToChangeInstallationDirectory": true
-    }
+    "start": "electron ."
   },
   "dependencies": {
     "tesseract.js": "^6.0.1"
   },
   "devDependencies": {
-    "electron": "^38.0.0",
-    "electron-builder": "^26.0.12"
+    "electron": "^38.0.0"
   }
 }
