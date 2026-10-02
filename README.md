@@ -1,86 +1,72 @@
-# Dublagem de Vídeo AI
+# FrameLens
 
-Aplicativo desktop para Windows que recebe um vídeo de até **60 minutos** e entrega uma versão **dublada em português do Brasil**, com processamento local.
+Aplicativo desktop para capturar uma janela de jogo e reconhecer apenas o texto da caixa de diálogo escolhida pelo usuário.
 
-## Fluxo
+O repositório foi reiniciado como um projeto novo. A versão atual é um MVP funcional focado em três coisas: seleção manual da janela, recorte preciso da área de diálogo e OCR local.
 
-1. **Whisper Large v3 Turbo** transcreve o áudio e preserva timestamps.
-2. **Qwen 3 4B** traduz os trechos para PT-BR sem resumir o conteúdo.
-3. **Kokoro 82M** gera a voz brasileira escolhida.
-4. **FFmpeg** ajusta cada fala ao tempo original e remonta o vídeo.
-5. O app salva `.srt` original e traduzido, além do MP4 final.
+## O que já existe
 
-O app mantém cache por vídeo. Se o processo for interrompido, as etapas concluídas são reaproveitadas.
+- seleção manual entre janelas abertas e monitores;
+- prévia ao vivo da janela escolhida;
+- área de OCR visível sobre a imagem;
+- seleção manual da caixa de diálogo arrastando o mouse;
+- sugestão automática de uma região provável de diálogo;
+- OCR local com Tesseract.js;
+- idiomas: inglês, português, japonês, espanhol, francês e alemão;
+- modos de imagem Natural, Contraste leve e Preto e branco;
+- leitura manual ou automática com intervalo configurável;
+- confiança aproximada do OCR;
+- histórico das últimas leituras e botão de copiar;
+- layout responsivo para janelas menores;
+- interface própria em carvão, creme, sálvia e laranja, sem estética roxa/genérica de app de IA.
 
-## Foco em AMD Radeon RX 9060 XT 16 GB
+## Rodar no Windows
 
-A configuração padrão foi feita para Radeon RDNA4 no Windows:
+Requer Node.js 20+.
 
-- Whisper: `whisper.cpp` via **Vulkan** na Radeon.
-- Tradução: `llama.cpp` via **Vulkan**, com `--parallel 1` para estabilidade.
-- TTS: Kokoro/ONNX Runtime via **DirectML**.
-- Apenas um modelo pesado fica carregado por vez, reduzindo pressão sobre os 16 GB de VRAM.
-
-A camada de runtime de Whisper/Qwen usa [Lemonade](https://github.com/lemonade-sdk/lemonade). O TTS usa [kokoro-en](https://github.com/pguso/kokoro), que oferece backend DirectML no Windows.
-
-## Modelos
-
-- `Whisper-Large-v3-Turbo`
-- `Qwen3-4B-GGUF`
-- `Kokoro-82M-v1.0-ONNX`
-  - `pf_dora` — feminina PT-BR
-  - `pm_alex` — masculina PT-BR
-  - `pm_santa` — masculina PT-BR
-
-Na primeira execução, clique em **Preparar IA**. O app baixa o runtime, os backends GPU e os modelos automaticamente.
-
-## Desenvolvimento
-
-Requisitos para desenvolver/compilar:
-
-- Windows 11 x64
-- Node.js 22+
-- Rust stable / Cargo
-- Driver AMD atualizado
-
-```powershell
+```bash
 npm install
-npm run build:tts
-npm run dev
+npm start
 ```
 
-### Gerar instalador/portable
+Na primeira leitura de cada idioma, o Tesseract pode precisar baixar os dados daquele idioma. Depois eles ficam em cache no diretório de dados do aplicativo.
 
-```powershell
+## Gerar instalador
+
+```bash
 npm run dist
 ```
 
-Os arquivos ficam em `release/`.
+O Electron Builder gera um instalador NSIS do Windows na pasta `dist`.
 
-## Saída
+## Como usar
 
-Para `aula01.mp4`:
+1. Abra o jogo.
+2. Abra o FrameLens.
+3. Em **Aplicativo**, escolha manualmente a janela do jogo.
+4. Clique em **Conectar ao jogo**.
+5. Clique em **Marcar área** e arraste exatamente sobre a caixa de diálogo.
+6. Escolha o idioma e o tratamento de imagem.
+7. Use **Ler agora** ou mantenha a leitura automática ligada.
 
-```text
-aula01_PTBR_DUBLADO.mp4
-aula01_PTBR.srt
-aula01_ORIGINAL.srt
-```
+## Sobre a precisão
 
-O cache fica na pasta de saída com nome `.videodub-cache-*`.
+OCR de jogos varia muito conforme fonte, contorno, transparência, resolução e animações. Por isso o FrameLens não depende apenas de detecção automática: a área manual permite excluir HUD, nomes de personagens, minimapa e outros elementos que normalmente pioram o reconhecimento.
 
-## Limitações atuais
+Para texto com borda forte ou fundo translúcido, comece com **Contraste leve**. O modo **Preto e branco** pode ajudar em caixas muito limpas, mas pode piorar fontes coloridas.
 
-- Máximo de 60 minutos por vídeo.
-- A versão atual faz uma voz PT-BR única por vídeo; não faz diarização/múltiplos dubladores.
-- O TTS não clona a voz original nesta primeira versão.
-- Para música/efeitos misturados à fala, há opção de manter o áudio original bem baixo sob a dublagem.
-- O primeiro setup exige internet para baixar runtimes e modelos. Depois, a inferência é local.
+## Limitações atuais do MVP
 
-## Privacidade
+- alguns jogos com conteúdo protegido ou métodos de renderização específicos podem retornar uma captura preta;
+- o primeiro uso de um idioma pode exigir internet para baixar os dados do OCR;
+- a sugestão automática de caixa de diálogo é heurística e deve ser refinada manualmente quando necessário;
+- ainda não há tradução: esta primeira versão foca em capturar e reconhecer o texto corretamente.
 
-Os vídeos não são enviados a serviços de dublagem. A inferência de transcrição, tradução e voz roda localmente depois do setup.
+## Próximos passos naturais
 
-## Licença
-
-MIT. Consulte também as licenças dos modelos e runtimes baixados separadamente antes de redistribuí-los comercialmente.
+- persistir configuração por jogo (janela, idioma, região e filtros);
+- detectar mudança real na caixa de diálogo antes de rodar OCR novamente;
+- filtros específicos para texto com outline/sombra;
+- suporte a múltiplas regiões, por exemplo nome do personagem + fala;
+- modo overlay opcional;
+- empacotar dados de idiomas selecionados para um modo 100% offline.

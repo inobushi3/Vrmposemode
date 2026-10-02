@@ -1,12 +1,161 @@
 <!doctype html>
 <html lang="pt-BR">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Dublagem de Vídeo AI</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self' data:; script-src 'self'; style-src 'self'; img-src 'self' data:; media-src blob:;" />
+  <title>FrameLens</title>
+  <link rel="stylesheet" href="./src/styles.css" />
+</head>
+<body>
+  <div class="app-shell">
+    <header class="topbar">
+      <div class="brand-lockup">
+        <div class="brand-mark" aria-hidden="true"><span></span><span></span><span></span></div>
+        <div>
+          <strong>FrameLens</strong>
+          <p>Leia a caixa de diálogo. Só ela.</p>
+        </div>
+      </div>
+      <div class="status-pill" id="captureStatus" data-state="idle">
+        <span class="status-dot"></span>
+        <span id="captureStatusText">Aguardando jogo</span>
+      </div>
+    </header>
+
+    <main class="workspace-grid">
+      <aside class="panel controls-panel">
+        <div class="panel-heading">
+          <span class="step-number">01</span>
+          <div>
+            <h2>Escolha o jogo</h2>
+            <p>Selecione manualmente qualquer janela aberta.</p>
+          </div>
+        </div>
+
+        <label class="field-label" for="sourceSelect">Aplicativo</label>
+        <div class="source-row">
+          <select id="sourceSelect" class="field-control"></select>
+          <button id="refreshSources" class="icon-button" title="Atualizar janelas" aria-label="Atualizar janelas">↻</button>
+        </div>
+
+        <div class="source-card" id="sourceCard">
+          <img id="sourceThumbnail" alt="Prévia do aplicativo selecionado" />
+          <div class="source-empty" id="sourceEmpty">Nenhuma prévia disponível</div>
+          <div class="source-card-footer">
+            <span id="sourceKind">Janela</span>
+            <strong id="sourceName">—</strong>
+          </div>
+        </div>
+
+        <button id="startCapture" class="primary-button">Conectar ao jogo</button>
+
+        <div class="divider"></div>
+
+        <div class="panel-heading compact">
+          <span class="step-number">02</span>
+          <div>
+            <h2>Leitura</h2>
+            <p>Ajuste apenas o necessário para o jogo.</p>
+          </div>
+        </div>
+
+        <label class="field-label" for="languageSelect">Idioma do texto</label>
+        <select id="languageSelect" class="field-control">
+          <option value="eng">English</option>
+          <option value="por">Português</option>
+          <option value="jpn">日本語</option>
+          <option value="spa">Español</option>
+          <option value="fra">Français</option>
+          <option value="deu">Deutsch</option>
+        </select>
+
+        <label class="field-label" for="preprocessSelect">Tratamento da imagem</label>
+        <select id="preprocessSelect" class="field-control">
+          <option value="natural">Natural</option>
+          <option value="contrast" selected>Contraste leve</option>
+          <option value="mono">Preto e branco</option>
+        </select>
+
+        <div class="setting-line">
+          <div>
+            <span class="field-label inline">Leitura automática</span>
+            <small>Lê novamente quando o intervalo terminar.</small>
+          </div>
+          <label class="switch">
+            <input id="autoOcr" type="checkbox" checked />
+            <span></span>
+          </label>
+        </div>
+
+        <label class="field-label range-label" for="intervalRange">
+          <span>Intervalo</span>
+          <strong id="intervalValue">1,4 s</strong>
+        </label>
+        <input id="intervalRange" type="range" min="700" max="4000" step="100" value="1400" />
+      </aside>
+
+      <section class="preview-column">
+        <div class="preview-toolbar">
+          <div>
+            <span class="eyebrow">ÁREA DE DIÁLOGO</span>
+            <h1>Enquadre o texto do jogo</h1>
+          </div>
+          <div class="toolbar-actions">
+            <button id="suggestRegion" class="ghost-button">Sugerir área</button>
+            <button id="markRegion" class="ghost-button">Marcar área</button>
+          </div>
+        </div>
+
+        <div class="preview-stage" id="previewStage">
+          <canvas id="previewCanvas"></canvas>
+          <div class="preview-placeholder" id="previewPlaceholder">
+            <div class="placeholder-frame"><span></span><span></span><span></span><span></span></div>
+            <strong>Selecione uma janela e conecte</strong>
+            <p>Depois arraste sobre a caixa de diálogo para delimitar exatamente o que será lido.</p>
+          </div>
+          <div class="selection-hint" id="selectionHint">Arraste para marcar a caixa de diálogo</div>
+        </div>
+
+        <div class="preview-footer">
+          <span>O retângulo laranja é a única região enviada ao OCR.</span>
+          <button id="resetRegion" class="text-button">Restaurar área padrão</button>
+        </div>
+      </section>
+
+      <aside class="panel result-panel">
+        <div class="panel-heading result-heading">
+          <span class="step-number">03</span>
+          <div>
+            <h2>Texto reconhecido</h2>
+            <p id="ocrMeta">Pronto para ler.</p>
+          </div>
+        </div>
+
+        <div class="result-actions">
+          <button id="scanNow" class="primary-button">Ler agora</button>
+          <button id="copyText" class="ghost-button">Copiar</button>
+        </div>
+
+        <div class="ocr-output" id="ocrOutput" aria-live="polite">
+          <span class="output-empty">O texto reconhecido vai aparecer aqui.</span>
+        </div>
+
+        <div class="history-heading">
+          <span>Histórico</span>
+          <button id="clearHistory" class="text-button">Limpar</button>
+        </div>
+        <div class="history-list" id="historyList">
+          <p class="history-empty">Sem leituras ainda.</p>
+        </div>
+      </aside>
+    </main>
+  </div>
+
+  <video id="captureVideo" autoplay muted playsinline></video>
+  <canvas id="captureCanvas"></canvas>
+  <canvas id="ocrCanvas"></canvas>
+
+  <script src="./src/app.js"></script>
+</body>
 </html>

@@ -1,6 +1,7 @@
 node_modules/
 dist/
-release/
 *.log
 .DS_Store
-native/kokoro-cli/target/
+Thumbs.db
+.env
+.env.*

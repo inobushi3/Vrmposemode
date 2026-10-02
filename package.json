@@ -1,58 +1,37 @@
 {
-  "name": "dublagem-de-video-ai",
+  "name": "framelens-game-ocr",
   "version": "0.1.0",
   "private": true,
-  "description": "App desktop local para transcrever, traduzir e dublar vídeos usando a GPU AMD.",
-  "main": "electron/main.mjs",
-  "type": "module",
+  "description": "Responsive desktop OCR for reading dialogue directly from a selected game window.",
+  "main": "electron/main.js",
   "scripts": {
-    "dev": "concurrently -k \"vite --host 127.0.0.1\" \"wait-on http://127.0.0.1:5173 && electron .\"",
-    "build": "vite build",
-    "dist": "npm run build && electron-builder --win nsis portable --publish never"
-  },
-  "dependencies": {
-    "adm-zip": "^0.5.16",
-    "axios": "^1.12.2",
-    "ffmpeg-static": "^5.2.0",
-    "ffprobe-static": "^3.1.0",
-    "form-data": "^4.0.4",
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1"
-  },
-  "devDependencies": {
-    "@vitejs/plugin-react": "^5.0.2",
-    "concurrently": "^9.2.1",
-    "electron": "^38.1.0",
-    "electron-builder": "^26.0.12",
-    "vite": "^7.1.5",
-    "wait-on": "^8.0.4"
+    "start": "electron .",
+    "dev": "electron .",
+    "dist": "electron-builder --win"
   },
   "build": {
-    "appId": "com.inobushi3.videodub",
-    "productName": "Dublagem de Video AI",
-    "asar": true,
-    "asarUnpack": [
-      "node_modules/ffmpeg-static/**",
-      "node_modules/ffprobe-static/**"
-    ],
+    "appId": "com.inobushi.framelens",
+    "productName": "FrameLens",
     "files": [
-      "dist/**",
-      "electron/**",
+      "electron/**/*",
+      "src/**/*",
+      "index.html",
       "package.json"
     ],
     "win": {
-      "target": [
-        "nsis",
-        "portable"
-      ],
-      "artifactName": "${productName}-${version}-${arch}.${ext}"
+      "target": "nsis",
+      "artifactName": "FrameLens-${version}-Setup.${ext}"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true
-    },
-    "directories": {
-      "output": "release"
     }
+  },
+  "dependencies": {
+    "tesseract.js": "^6.0.1"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.12"
   }
 }
