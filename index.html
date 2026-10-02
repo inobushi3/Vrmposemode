@@ -72,15 +72,16 @@
 
         <label class="field-label" for="preprocessSelect">Tratamento da imagem</label>
         <select id="preprocessSelect" class="field-control">
+          <option value="dialogue" selected>Texto de diálogo</option>
+          <option value="contrast">Contraste</option>
           <option value="natural">Natural</option>
-          <option value="contrast" selected>Contraste leve</option>
           <option value="mono">Preto e branco</option>
         </select>
 
         <div class="setting-line">
           <div>
-            <span class="field-label inline">Leitura automática</span>
-            <small>Lê novamente quando o intervalo terminar.</small>
+            <span class="field-label inline">Detectar nova fala</span>
+            <small>O OCR só roda quando a caixa muda e para de se mexer.</small>
           </div>
           <label class="switch">
             <input id="autoOcr" type="checkbox" checked />
@@ -88,18 +89,17 @@
           </label>
         </div>
 
-        <label class="field-label range-label" for="intervalRange">
-          <span>Intervalo</span>
-          <strong id="intervalValue">1,4 s</strong>
-        </label>
-        <input id="intervalRange" type="range" min="700" max="4000" step="100" value="1400" />
+        <div class="detector-note">
+          <strong>Sem leitura por intervalo.</strong>
+          <span>O FrameLens observa apenas mudanças visuais leves na área marcada e faz OCR quando aparece uma fala nova.</span>
+        </div>
       </aside>
 
       <section class="preview-column">
         <div class="preview-toolbar">
           <div>
             <span class="eyebrow">ÁREA DE DIÁLOGO</span>
-            <h1>Enquadre o texto do jogo</h1>
+            <h1>Enquadre somente as falas</h1>
           </div>
           <div class="toolbar-actions">
             <button id="suggestRegion" class="ghost-button">Sugerir área</button>
@@ -112,13 +112,13 @@
           <div class="preview-placeholder" id="previewPlaceholder">
             <div class="placeholder-frame"><span></span><span></span><span></span><span></span></div>
             <strong>Selecione uma janela e conecte</strong>
-            <p>Depois arraste sobre a caixa de diálogo para delimitar exatamente o que será lido.</p>
+            <p>Depois marque apenas a parte onde as letras da fala aparecem. Evite personagem, HUD e moldura sempre que possível.</p>
           </div>
-          <div class="selection-hint" id="selectionHint">Arraste para marcar a caixa de diálogo</div>
+          <div class="selection-hint" id="selectionHint">Arraste só sobre o texto da fala</div>
         </div>
 
         <div class="preview-footer">
-          <span>O retângulo laranja é a única região enviada ao OCR.</span>
+          <span>Quanto mais justa a área ao texto, melhor a leitura.</span>
           <button id="resetRegion" class="text-button">Restaurar área padrão</button>
         </div>
       </section>
@@ -127,19 +127,29 @@
         <div class="panel-heading result-heading">
           <span class="step-number">03</span>
           <div>
-            <h2>Texto reconhecido</h2>
-            <p id="ocrMeta">Pronto para ler.</p>
+            <h2>Diálogo</h2>
+            <p id="ocrMeta">Aguardando uma fala nova.</p>
           </div>
         </div>
 
         <div class="result-actions">
           <button id="scanNow" class="primary-button">Ler agora</button>
-          <button id="copyText" class="ghost-button">Copiar</button>
+          <button id="copyText" class="ghost-button">Copiar tradução</button>
         </div>
 
-        <div class="ocr-output" id="ocrOutput" aria-live="polite">
-          <span class="output-empty">O texto reconhecido vai aparecer aqui.</span>
-        </div>
+        <section class="translation-block translation-main">
+          <div class="translation-label">Português</div>
+          <div class="ocr-output" id="translatedOutput" aria-live="polite">
+            <span class="output-empty">A tradução vai aparecer aqui.</span>
+          </div>
+        </section>
+
+        <section class="translation-block original-block">
+          <div class="translation-label">Original</div>
+          <div class="original-output" id="originalOutput">
+            <span class="output-empty">O texto reconhecido vai aparecer aqui.</span>
+          </div>
+        </section>
 
         <div class="history-heading">
           <span>Histórico</span>
@@ -155,6 +165,7 @@
   <video id="captureVideo" autoplay muted playsinline></video>
   <canvas id="captureCanvas"></canvas>
   <canvas id="ocrCanvas"></canvas>
+  <canvas id="changeCanvas"></canvas>
 
   <script src="./src/app.js"></script>
 </body>
